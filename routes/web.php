@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CustomPageController;
 use App\Http\Controllers\GhlOAuthController;
+use App\Http\Controllers\GhlWebhookController;
 use App\Http\Controllers\LogViewerController;
 use Illuminate\Support\Facades\Route;
 
@@ -24,6 +25,14 @@ Route::get('/connect', [GhlOAuthController::class, 'connect'])->name('ghl.connec
 Route::get('/oauth/ghl', [GhlOAuthController::class, 'connect']);
 Route::get('/callback', [GhlOAuthController::class, 'callback'])->name('ghl.callback');
 Route::get('/oauth/callback', [GhlOAuthController::class, 'callback']);
+
+/*
+|--------------------------------------------------------------------------
+| GoHighLevel Marketplace Inbound Webhooks
+|--------------------------------------------------------------------------
+*/
+Route::post('/webhook', [GhlWebhookController::class, 'ghlWebhook'])->name('ghl.webhook');
+Route::post('/webhooks/ghl', [GhlWebhookController::class, 'ghlWebhook']);
 
 /*
 |--------------------------------------------------------------------------
