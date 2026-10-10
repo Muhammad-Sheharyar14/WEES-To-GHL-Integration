@@ -33,6 +33,7 @@ Route::get('/oauth/callback', [GhlOAuthController::class, 'callback']);
 */
 Route::post('/webhook', [GhlWebhookController::class, 'ghlWebhook'])->name('ghl.webhook');
 Route::post('/webhooks/ghl', [GhlWebhookController::class, 'ghlWebhook']);
+Route::post('/api/webhook', [GhlWebhookController::class, 'ghlWebhook']);
 
 /*
 |--------------------------------------------------------------------------

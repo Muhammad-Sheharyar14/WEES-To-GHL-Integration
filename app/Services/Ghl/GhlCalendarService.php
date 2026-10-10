@@ -163,4 +163,22 @@ class GhlCalendarService
             return false;
         }
     }
+
+    /**
+     * Fetch GHL Contact by contactId
+     */
+    public function getContact(string $locationId, string $contactId): ?array
+    {
+        try {
+            $res = $this->ghlRequest('GET', "contacts/{$contactId}", $locationId);
+
+            if (in_array($res->status(), [200, 201])) {
+                return $res->json('contact') ?? $res->json();
+            }
+        } catch (Exception $e) {
+            Log::warning("Could not fetch GHL contact {$contactId}: " . $e->getMessage());
+        }
+
+        return null;
+    }
 }
