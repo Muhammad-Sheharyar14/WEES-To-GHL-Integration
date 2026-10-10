@@ -49,7 +49,7 @@ class WessClient
     /**
      * Execute an HTTP request with authentication and SSL options
      */
-    protected function request(string $method, string $url, array $params = [], array $body = [])
+    public function request(string $method, string $url, array $params = [], array $body = [])
     {
         $client = Http::withHeaders([
             'Authorization' => 'Bearer ' . $this->token,
@@ -255,5 +255,19 @@ class WessClient
         }
 
         return $response->json() ?? ['success' => true];
+    }
+
+    /**
+     * Get appointments list for a branch
+     */
+    public function getAppointments(int|string $branchId, array $params = []): array
+    {
+        $response = $this->request('GET', "{$this->baseUrl}/branches/{$branchId}/appointments", $params);
+
+        if (!$response->successful()) {
+            return [];
+        }
+
+        return $response->json('data') ?? $response->json() ?? [];
     }
 }

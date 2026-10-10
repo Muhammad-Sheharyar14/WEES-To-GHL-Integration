@@ -1,8 +1,12 @@
 <?php
 
-use Illuminate\Foundation\Inspiring;
-use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 
-Artisan::command('inspire', function () {
-    $this->comment(Inspiring::quote());
-})->purpose('Display an inspiring quote');
+/*
+|--------------------------------------------------------------------------
+| Console Schedule & Tasks
+|--------------------------------------------------------------------------
+| Periodically polls WESS for branch appointment updates and syncs them
+| to GoHighLevel calendars every 10 minutes.
+*/
+Schedule::command('wess:sync')->everyTenMinutes();
