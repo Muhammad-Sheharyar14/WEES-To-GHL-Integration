@@ -234,11 +234,19 @@
         /* Tab Navigation Bar */
         .tabs-nav-bar {
             display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 22px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0px;
+        }
+
+        .tabs-nav-left {
+            display: flex;
             align-items: center;
             gap: 8px;
-            margin-bottom: 18px;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 2px;
+            flex-wrap: nowrap;
         }
 
         .tab-nav-btn {
@@ -284,56 +292,130 @@
             color: var(--primary);
         }
 
-        /* Master Sync Switch Banner */
-        .master-switch-banner {
-            background: #ffffff;
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-lg);
-            padding: 16px 20px;
-            margin-bottom: 18px;
+        .tab-label-desktop {
+            display: inline;
+        }
+
+        .tab-label-mobile {
+            display: none;
+        }
+
+        .tabs-nav-right {
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            box-shadow: var(--shadow-sm);
-            gap: 16px;
+            padding-bottom: 6px;
         }
 
-        .switch-info {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-        }
-
-        .switch-icon {
-            width: 40px;
-            height: 40px;
-            background: var(--primary-light);
-            border: 1px solid var(--primary-border);
-            border-radius: var(--radius-md);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            color: var(--primary);
-            flex-shrink: 0;
-        }
-
-        .switch-title {
-            font-size: 15px;
-            font-weight: 700;
-            color: var(--text-main);
-        }
-
-        .switch-desc {
-            font-size: 13px;
-            color: var(--text-muted);
-            margin-top: 1px;
-        }
-
-        .toggle-wrapper {
-            display: flex;
+        .nav-sync-toggle-box {
+            display: inline-flex;
             align-items: center;
             gap: 12px;
+            background: #ffffff;
+            border: 1px solid var(--border-color);
+            padding: 6px 14px;
+            border-radius: 30px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            transition: all 0.2s ease;
+        }
+
+        .nav-sync-toggle-box:hover {
+            border-color: #cbd5e1;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 12px 14px;
+            }
+
+            .tabs-nav-bar {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+                margin-bottom: 18px;
+                border-bottom: none;
+                padding-bottom: 0;
+            }
+
+            .tabs-nav-left {
+                width: 100%;
+                display: flex;
+                background: #f1f5f9;
+                padding: 4px;
+                border-radius: var(--radius-md);
+                border: 1px solid var(--border-color);
+                gap: 4px;
+                box-sizing: border-box;
+            }
+
+            .tab-nav-btn {
+                flex: 1 1 0;
+                min-width: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                padding: 9px 8px;
+                border: none !important;
+                border-radius: var(--radius-sm);
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--text-muted);
+                background: transparent;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                box-shadow: none;
+            }
+
+            .tab-nav-btn:hover {
+                color: var(--primary);
+                background-color: rgba(255, 255, 255, 0.5);
+            }
+
+            .tab-nav-btn.active {
+                background: #ffffff;
+                color: var(--primary);
+                font-weight: 700;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+                border: none !important;
+                border-bottom: none !important;
+            }
+
+            .tab-label-desktop {
+                display: none;
+            }
+
+            .tab-label-mobile {
+                display: inline;
+                white-space: nowrap;
+            }
+
+            .tab-badge {
+                font-size: 11px;
+                padding: 1px 6px;
+            }
+
+            .tabs-nav-right {
+                width: 100%;
+                padding: 0;
+            }
+
+            .nav-sync-toggle-box {
+                width: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 10px 14px;
+                background: #ffffff;
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+                box-sizing: border-box;
+            }
+
+            .card {
+                padding: 18px 16px;
+            }
         }
 
         .toggle-status-text {
@@ -394,6 +476,7 @@
             display: grid;
             grid-template-columns: 1.15fr 0.85fr;
             gap: 20px;
+            align-items: start;
         }
 
         @media (max-width: 860px) {
@@ -518,6 +601,10 @@
             border-top: 1px solid #f1f5f9;
         }
 
+        .btn-actions .btn {
+            flex: 1;
+        }
+
         .btn {
             display: inline-flex;
             align-items: center;
@@ -532,13 +619,13 @@
             border: 1px solid transparent;
             transition: all 0.15s ease;
             text-decoration: none;
+            flex-shrink: 0;
         }
 
         .btn-primary {
             background-color: var(--primary);
             color: #ffffff;
             box-shadow: 0 1px 3px rgba(37, 99, 235, 0.2);
-            flex: 1;
         }
 
         .btn-primary:hover:not(:disabled) {
@@ -550,7 +637,6 @@
             background-color: #ffffff;
             border-color: var(--border-color);
             color: var(--text-main);
-            flex: 1;
         }
 
         .btn-secondary:hover:not(:disabled) {
@@ -559,10 +645,18 @@
         }
 
         .btn-sm {
-            height: 32px;
-            padding: 0 12px;
+            height: 34px;
+            padding: 0 14px;
             font-size: 13px;
             border-radius: var(--radius-sm);
+            flex: 0 0 auto;
+            width: auto;
+        }
+
+        #btnRefreshLogs {
+            flex: 0 0 auto;
+            width: auto;
+            white-space: nowrap;
         }
 
         /* Status Metrics List */
@@ -1087,8 +1181,8 @@
         <div class="brand-area">
             <div class="brand-logo-badge">W</div>
             <div class="header-titles">
-                <h1>WESS Integration <span style="font-size: 12.5px; font-weight: 600; color: var(--primary); background: var(--primary-light); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--primary-border);">CRM Sync</span></h1>
-                <p>Ample Life &bull; Salon & Spa 2-way sync for appointments, clients, and calendar availability</p>
+                <h1>WESS Integration</h1>
+                <p>Bidirectional sync for appointments and contacts</p>
             </div>
         </div>
         <div class="header-actions">
@@ -1099,33 +1193,24 @@
         </div>
     </header>
 
-    <!-- Ajax-Based Tab Navigation Menu -->
+    <!-- Ajax-Based Tab Navigation Menu & Master Sync Switch -->
     <div class="tabs-nav-bar">
-        <button type="button" class="tab-nav-btn active" id="tabBtnCredentials" onclick="switchMainTab('credentials')">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-            <span>WESS Credentials & Settings</span>
-        </button>
-        <button type="button" class="tab-nav-btn" id="tabBtnLogs" onclick="switchMainTab('logs')">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-            <span>Activity & Webhook Logs</span>
-            <span class="tab-badge" id="logsCountBadge">0</span>
-        </button>
-    </div>
+        <div class="tabs-nav-left">
+            <button type="button" class="tab-nav-btn active" id="tabBtnCredentials" onclick="switchMainTab('credentials')">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                <span class="tab-label-desktop">WESS Credentials & Settings</span>
+                <span class="tab-label-mobile">Credentials</span>
+            </button>
+            <button type="button" class="tab-nav-btn" id="tabBtnLogs" onclick="switchMainTab('logs')">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                <span class="tab-label-desktop">Activity & Webhook Logs</span>
+                <span class="tab-label-mobile">Activity Logs</span>
+                <span class="tab-badge" id="logsCountBadge">0</span>
+            </button>
+        </div>
 
-    <!-- ========================================================
-         TAB 1: WESS CREDENTIALS & SETTINGS
-    ======================================================== -->
-    <div id="tabContentCredentials">
-        <!-- Master Sync Kill-Switch Banner -->
-        <div class="master-switch-banner">
-            <div class="switch-info">
-                <div class="switch-icon">⚡</div>
-                <div>
-                    <div class="switch-title">Account Master Sync Switch</div>
-                    <div class="switch-desc">Instantly toggle all 2-way appointment and contact sync operations for this account.</div>
-                </div>
-            </div>
-            <div class="toggle-wrapper">
+        <div class="tabs-nav-right">
+            <div class="nav-sync-toggle-box" title="Toggle bidirectional synchronization for appointments and contacts">
                 <span class="toggle-status-text" id="toggleStatusLabel">Sync Active</span>
                 <label class="switch-label">
                     <input type="checkbox" id="masterSyncToggle" checked onchange="handleMasterToggleChange(this.checked)">
@@ -1133,7 +1218,12 @@
                 </label>
             </div>
         </div>
+    </div>
 
+    <!-- ========================================================
+         TAB 1: WESS CREDENTIALS & SETTINGS
+    ======================================================== -->
+    <div id="tabContentCredentials">
         <!-- 2-Column Main Layout -->
         <div class="main-layout">
             <!-- Left: API Credentials Form -->
@@ -1154,9 +1244,11 @@
                             <span class="label-badge">Required</span>
                         </label>
                         <div class="input-group">
-                            <input type="url" class="form-control" id="base_url" name="base_url" placeholder="https://api.prelive.wessconnect.net/api/v1/online" required autocomplete="off">
+                            <select class="form-control" id="base_url" name="base_url" required>
+                                <option value="https://api.wessconnect.net/api/v1/online">Live (https://api.wessconnect.net/api/v1/online)</option>
+                                <option value="https://api.prelive.wessconnect.net/api/v1/online" selected>Sandbox (https://api.prelive.wessconnect.net/api/v1/online)</option>
+                            </select>
                         </div>
-                        <div class="form-hint">Sandbox: <code>https://api.prelive.wessconnect.net/api/v1/online</code></div>
                     </div>
 
                     <div class="form-group">
@@ -1168,7 +1260,6 @@
                             <input type="password" class="form-control" id="api_token" name="api_token" placeholder="Paste your WESS Bearer Auth Token" required autocomplete="off">
                             <button type="button" class="btn-toggle-pwd" id="toggleSecretBtn" onclick="toggleSecretVisibility()">Show</button>
                         </div>
-                        <div class="form-hint">Generated under WESS Developer Portal / API Vendor Tokens.</div>
                     </div>
 
                     <div class="form-group">
@@ -1181,7 +1272,20 @@
                                 <option value="">-- Connect API to Load Branches --</option>
                             </select>
                         </div>
-                        <div class="form-hint">Branches are loaded live from WESS API. Bookings and customers will be assigned to this branch.</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" for="calendar_id">
+                            <span>CRM Booking Calendar</span>
+                            <span class="label-badge" id="calendarLoadingBadge">Live API</span>
+                        </label>
+                        <div class="input-group">
+                            <select class="form-control" id="calendar_id" name="calendar_id" required>
+                                <option value="">-- Connect Account to Load Calendars --</option>
+                            </select>
+                        </div>
+                        <input type="hidden" name="calendar_name" id="calendar_name">
+                        <input type="hidden" name="calendar_user_id" id="calendar_user_id">
                     </div>
 
                     <div class="btn-actions">
@@ -1218,6 +1322,10 @@
                     <div class="metric-item">
                         <span class="metric-key">Selected Branch</span>
                         <span class="metric-val" id="dispBranchName">-</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-key">Selected Calendar</span>
+                        <span class="metric-val" id="dispCalendarName">-</span>
                     </div>
                     <div class="metric-item">
                         <span class="metric-key">2-Way Sync Engine</span>
@@ -1512,6 +1620,71 @@
         }
     }
 
+    function populateCalendars(calendars, selectedCalendarId = null, selectedUserId = null) {
+        const select = document.getElementById('calendar_id');
+        select.innerHTML = '';
+
+        const badge = document.getElementById('calendarLoadingBadge');
+        if (badge) {
+            badge.textContent = calendars && calendars.length > 0 ? `${calendars.length} CRM Calendars` : 'CRM API';
+        }
+
+        if (!calendars || calendars.length === 0) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '-- No calendars found in CRM account --';
+            select.appendChild(opt);
+            document.getElementById('dispCalendarName').textContent = '-';
+            return;
+        }
+
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = '';
+        defaultOpt.textContent = '-- Select Booking Calendar --';
+        select.appendChild(defaultOpt);
+
+        calendars.forEach(cal => {
+            const opt = document.createElement('option');
+            opt.value = cal.id;
+            opt.textContent = `${cal.name || 'Calendar ' + cal.id}`;
+            opt.dataset.calendarName = cal.name || '';
+            opt.dataset.userId = cal.user_id || '';
+            if (selectedCalendarId && String(cal.id) === String(selectedCalendarId)) {
+                opt.selected = true;
+            }
+            select.appendChild(opt);
+        });
+
+        // If selectedCalendarId was saved but not in the active list, preserve it as an option
+        if (selectedCalendarId && !Array.from(select.options).some(o => o.value === selectedCalendarId)) {
+            const opt = document.createElement('option');
+            opt.value = selectedCalendarId;
+            opt.textContent = `Calendar (${selectedCalendarId})`;
+            opt.dataset.calendarName = `Calendar (${selectedCalendarId})`;
+            opt.dataset.userId = selectedUserId || '';
+            opt.selected = true;
+            select.appendChild(opt);
+        }
+
+        handleCalendarSelectionChange();
+    }
+
+    function handleCalendarSelectionChange() {
+        const select = document.getElementById('calendar_id');
+        const selectedOption = select.options[select.selectedIndex];
+        if (selectedOption && selectedOption.value) {
+            const calName = selectedOption.dataset.calendarName || selectedOption.textContent;
+            const userId  = selectedOption.dataset.userId || '';
+            document.getElementById('calendar_name').value = calName;
+            document.getElementById('calendar_user_id').value = userId;
+            document.getElementById('dispCalendarName').textContent = calName;
+        } else {
+            document.getElementById('calendar_name').value = '';
+            document.getElementById('calendar_user_id').value = '';
+            document.getElementById('dispCalendarName').textContent = '-';
+        }
+    }
+
     /* ========================================================
        User Data Decryption & Resolution
     ======================================================== */
@@ -1619,12 +1792,36 @@
                 if (data.credentials) {
                     const creds = data.credentials;
                     if (creds.api_token) document.getElementById('api_token').value = creds.api_token;
-                    if (creds.base_url) document.getElementById('base_url').value = creds.base_url;
+                    if (creds.base_url) {
+                        const sel = document.getElementById('base_url');
+                        const normalized = creds.base_url.replace(/\/+$/, '');
+                        let matched = false;
+                        for (let i = 0; i < sel.options.length; i++) {
+                            if (sel.options[i].value.replace(/\/+$/, '') === normalized) {
+                                sel.selectedIndex = i;
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if (!matched) {
+                            const opt = document.createElement('option');
+                            opt.value = creds.base_url;
+                            opt.textContent = `Custom (${creds.base_url})`;
+                            opt.selected = true;
+                            sel.appendChild(opt);
+                        }
+                    }
 
                     if (data.branches && data.branches.length > 0) {
                         populateBranches(data.branches, creds.branch_id);
                     } else if (creds.branch_id) {
                         populateBranches([{ id: creds.branch_id, name: creds.branch_name || `Branch ${creds.branch_id}` }], creds.branch_id);
+                    }
+
+                    if (data.calendars && data.calendars.length > 0) {
+                        populateCalendars(data.calendars, creds.calendar_id, creds.calendar_user_id);
+                    } else if (creds.calendar_id) {
+                        populateCalendars([{ id: creds.calendar_id, name: creds.calendar_name || `Calendar ${creds.calendar_id}`, user_id: creds.calendar_user_id }], creds.calendar_id, creds.calendar_user_id);
                     }
 
                     const dispWess = document.getElementById('dispWessStatus');
@@ -1633,6 +1830,9 @@
 
                     updateBadge(creds.is_connected);
                 } else {
+                    if (data.calendars && data.calendars.length > 0) {
+                        populateCalendars(data.calendars);
+                    }
                     updateBadge(false);
                 }
             } else {
@@ -1992,6 +2192,10 @@
         const branchSelect = document.getElementById('branch_id');
         const branchId   = branchSelect.value;
         const branchName = branchSelect.options[branchSelect.selectedIndex]?.text || '';
+        const calendarSelect = document.getElementById('calendar_id');
+        const calendarId     = calendarSelect.value;
+        const calendarName   = document.getElementById('calendar_name').value || calendarSelect.options[calendarSelect.selectedIndex]?.text || '';
+        const calendarUserId = document.getElementById('calendar_user_id').value || '';
         const syncEnabled= document.getElementById('masterSyncToggle').checked;
 
         if (!token) {
@@ -2016,6 +2220,9 @@
                 api_token: token,
                 branch_id: branchId,
                 branch_name: branchName,
+                calendar_id: calendarId,
+                calendar_name: calendarName,
+                calendar_user_id: calendarUserId,
                 is_sync_enabled: syncEnabled
             })
         })
@@ -2030,6 +2237,7 @@
                 document.getElementById('dispWessStatus').textContent = 'Verified & Connected';
                 document.getElementById('dispWessStatus').style.color = 'var(--success)';
                 if (data.branches) populateBranches(data.branches, branchId);
+                if (data.calendars) populateCalendars(data.calendars, calendarId, calendarUserId);
             } else {
                 notify('error', 'Save Failed', data.message);
                 updateBadge(false);
@@ -2041,6 +2249,14 @@
             notify('error', 'Network Error', 'Failed to save configuration.');
         });
     });
+
+    // Event Listeners for select element changes
+    document.getElementById('branch_id').addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+        document.getElementById('dispBranchName').textContent = (selectedOption && selectedOption.value) ? selectedOption.textContent : '-';
+    });
+
+    document.getElementById('calendar_id').addEventListener('change', handleCalendarSelectionChange);
 
     // Run on startup
     window.addEventListener('DOMContentLoaded', getUserData);

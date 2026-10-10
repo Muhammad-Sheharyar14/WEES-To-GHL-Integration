@@ -6,7 +6,7 @@ return [
     'redirect_uri'    => env('GHL_REDIRECT_URI', 'http://localhost:8000/callback'),
     'version_id'      => env('GHL_VERSION_ID', ''),
     'api_version'     => env('GHL_API_VERSION', 'v3'),
-    'scopes'          => env('GHL_SCOPES', 'locations.readonly contacts.readonly contacts.write workflows.readonly'),
+    'scopes'          => env('GHL_SCOPES', 'locations.readonly contacts.readonly contacts.write locations/customFields.readonly locations/customFields.write calendars.readonly calendars/events.readonly calendars/events.write workflows.readonly'),
     'shared_secret'   => env('GHL_SHARED_SECRET', ''),
     'base_url'        => env('GHL_BASE_URL', 'https://services.leadconnectorhq.com'),
     'marketplace_url' => env('GHL_MARKETPLACE_URL', 'https://marketplace.leadconnectorhq.com'),

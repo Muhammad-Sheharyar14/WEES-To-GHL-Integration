@@ -212,6 +212,21 @@ class GhlWebhookController extends Controller
                 }
             }
 
+            // Update GHL Contact custom fields (WESS Code & Last Visit)
+            if (!empty($customer['id']) && !empty($contactId)) {
+                try {
+                    $lastVisitDate = !empty($startTime) ? date('Y-m-d', strtotime($startTime)) : null;
+                    app(\App\Services\Ghl\GhlCustomFieldService::class)->updateContactCustomFields(
+                        $locationId,
+                        $contactId,
+                        (string)$customer['id'],
+                        $lastVisitDate
+                    );
+                } catch (Exception $e) {
+                    Log::warning("Could not sync custom fields for contact {$contactId}: " . $e->getMessage());
+                }
+            }
+
             $endpoint = "{$config->base_url}/branches/{$branchId}/appointments";
             $log->update([
                 'endpoint'        => $endpoint,

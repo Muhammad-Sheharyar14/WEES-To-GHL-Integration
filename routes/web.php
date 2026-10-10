@@ -4,6 +4,7 @@ use App\Http\Controllers\CustomPageController;
 use App\Http\Controllers\GhlOAuthController;
 use App\Http\Controllers\GhlWebhookController;
 use App\Http\Controllers\LogViewerController;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -49,6 +50,8 @@ Route::post('/api/custom-page/get', [CustomPageController::class, 'getCredential
 Route::post('/api/custom-page/save', [CustomPageController::class, 'saveCredentials'])->name('api.custom-page.save');
 Route::post('/api/custom-page/test', [CustomPageController::class, 'testConnection'])->name('api.custom-page.test');
 Route::post('/api/custom-page/toggle-sync', [CustomPageController::class, 'toggleSync'])->name('api.custom-page.toggle-sync');
+Route::post('/api/custom-page/calendars', [CustomPageController::class, 'getCalendars'])->name('api.custom-page.calendars');
+Route::get('/api/custom-page/calendars', [CustomPageController::class, 'getCalendars']);
 Route::post('/api/custom-page/logs', [CustomPageController::class, 'getLogs'])->name('api.custom-page.logs');
 Route::get('/api/custom-page/logs', [CustomPageController::class, 'getLogs']);
 
@@ -59,3 +62,42 @@ Route::get('/api/custom-page/logs', [CustomPageController::class, 'getLogs']);
 */
 Route::get('/logs', [LogViewerController::class, 'index'])->name('logs.index');
 Route::get('/api/logs', [LogViewerController::class, 'getLogs'])->name('logs.api');
+
+/*
+|--------------------------------------------------------------------------
+| Server Maintenance & Migration Triggers
+|--------------------------------------------------------------------------
+*/
+Route::get('/run-migrate', function () {
+    try {
+        Artisan::call('migrate', ['--force' => true]);
+        $output = Artisan::output();
+        return '<pre style="background:#0f172a;color:#10b981;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
+            . "=== MIGRATION COMPLETED ===\n\n" 
+            . e($output ?: "Nothing to migrate.\n") 
+            . '</pre>';
+    } catch (\Throwable $e) {
+        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
+            . "=== MIGRATION ERROR ===\n\n" 
+            . e($e->getMessage()) . "\n\n" 
+            . e($e->getTraceAsString()) 
+            . '</pre>';
+    }
+});
+
+Route::get('/run-oc', function () {
+    try {
+        Artisan::call('optimize:clear');
+        $output = Artisan::output();
+        return '<pre style="background:#0f172a;color:#38bdf8;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
+            . "=== OPTIMIZE:CLEAR COMPLETED ===\n\n" 
+            . e($output) 
+            . '</pre>';
+    } catch (\Throwable $e) {
+        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
+            . "=== CLEAR ERROR ===\n\n" 
+            . e($e->getMessage()) 
+            . '</pre>';
+    }
+});
+

@@ -152,4 +152,96 @@ class CustomPageTest extends TestCase
         $this->assertDatabaseMissing('ghl_tokens', ['location_id' => 'loc_to_uninstall']);
         $this->assertDatabaseMissing('webhook_logs', ['location_id' => 'loc_to_uninstall']);
     }
+
+    public function test_save_credentials_saves_calendar_and_user_id(): void
+    {
+        \Illuminate\Support\Facades\Http::fake([
+            'https://api.prelive.wessconnect.net/*' => \Illuminate\Support\Facades\Http::response([
+                'user' => ['id' => 1, 'name' => 'WESS Test User'],
+                'data' => [['id' => 1, 'name' => 'Main Salon']],
+                'permissions' => ['appointments.manage']
+            ], 200),
+            'https://services.leadconnectorhq.com/calendars*' => \Illuminate\Support\Facades\Http::response([
+                'calendars' => [
+                    [
+                        'id'           => 'cal_ghl_booking_456',
+                        'name'         => 'Salon Main Calendar',
+                        'calendarType' => 'round_robin',
+                        'teamMembers'  => [
+                            ['userId' => 'user_stylist_789', 'priority' => 1, 'isPrimary' => true]
+                        ]
+                    ]
+                ]
+            ], 200),
+        ]);
+
+        $response = $this->postJson('/api/custom-page/save', [
+            'locationId'       => 'loc_cal_test_123',
+            'api_token'        => 'valid_token_xyz',
+            'base_url'         => 'https://api.prelive.wessconnect.net/api/v1/online',
+            'branch_id'        => '1',
+            'branch_name'      => 'Main Salon',
+            'calendar_id'      => 'cal_ghl_booking_456',
+            'calendar_name'    => 'Salon Main Calendar',
+            'calendar_user_id' => 'user_stylist_789',
+            'is_sync_enabled'  => true,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success'     => true,
+                'is_verified' => true,
+            ]);
+
+        $this->assertDatabaseHas('wess_configs', [
+            'location_id'      => 'loc_cal_test_123',
+            'calendar_id'      => 'cal_ghl_booking_456',
+            'calendar_name'    => 'Salon Main Calendar',
+            'calendar_user_id' => 'user_stylist_789',
+        ]);
+    }
+
+    public function test_get_calendars_endpoint_returns_calendars(): void
+    {
+        $locationId = 'loc_cal_endpoint_test';
+
+        GhlToken::create([
+            'location_id'   => $locationId,
+            'access_token'  => 'fake_ghl_token',
+            'refresh_token' => 'fake_refresh_token',
+            'user_type'     => 'Location',
+            'expires_at'    => now()->addDay(),
+        ]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'https://services.leadconnectorhq.com/calendars*' => \Illuminate\Support\Facades\Http::response([
+                'calendars' => [
+                    [
+                        'id'           => 'cal_vip_1',
+                        'name'         => 'VIP Spa Calendar',
+                        'calendarType' => 'round_robin',
+                        'teamMembers'  => [
+                            ['userId' => 'usr_therapist_10', 'priority' => 1, 'isPrimary' => true]
+                        ]
+                    ]
+                ]
+            ], 200),
+        ]);
+
+        $response = $this->postJson('/api/custom-page/calendars', [
+            'locationId' => $locationId,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success'   => true,
+                'calendars' => [
+                    [
+                        'id'      => 'cal_vip_1',
+                        'name'    => 'VIP Spa Calendar',
+                        'user_id' => 'usr_therapist_10',
+                    ]
+                ]
+            ]);
+    }
 }

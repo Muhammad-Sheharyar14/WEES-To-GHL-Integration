@@ -63,7 +63,16 @@ class CustomPageController extends Controller
             Log::warning("Token resolution warning for account {$locationId}: " . $e->getMessage());
         }
 
-        // 2. Fetch WESS Configuration (No fallback credentials)
+        // 2. Fetch CRM Calendars
+        $calendars = [];
+        try {
+            $calendarService = app(\App\Services\Ghl\GhlCalendarService::class);
+            $calendars = $calendarService->getCalendars($locationId);
+        } catch (Exception $e) {
+            Log::info("Could not fetch CRM calendars during custom page init: " . $e->getMessage());
+        }
+
+        // 3. Fetch WESS Configuration (No fallback credentials)
         $config = WessConfig::where('location_id', $locationId)->first();
 
         $branches = [];
@@ -89,15 +98,19 @@ class CustomPageController extends Controller
             'is_verified'     => $config ? (bool)$config->is_connected : false,
             'is_sync_enabled' => $config ? (bool)$config->is_sync_enabled : true,
             'credentials'     => [
-                'api_token'       => $config ? $config->api_token : '',
-                'base_url'        => $config ? $config->base_url : '',
-                'branch_id'       => $config ? $config->branch_id : '',
-                'branch_name'     => $config ? $config->branch_name : '',
-                'is_sync_enabled' => $config ? (bool)$config->is_sync_enabled : true,
-                'is_connected'    => $config ? (bool)$config->is_connected : false,
-                'last_synced_at'  => $config && $config->last_synced_at ? $config->last_synced_at->toIso8601String() : null,
+                'api_token'        => $config ? $config->api_token : '',
+                'base_url'         => $config ? $config->base_url : '',
+                'branch_id'        => $config ? $config->branch_id : '',
+                'branch_name'      => $config ? $config->branch_name : '',
+                'calendar_id'      => $config ? $config->calendar_id : '',
+                'calendar_name'    => $config ? $config->calendar_name : '',
+                'calendar_user_id' => $config ? $config->calendar_user_id : '',
+                'is_sync_enabled'  => $config ? (bool)$config->is_sync_enabled : true,
+                'is_connected'     => $config ? (bool)$config->is_connected : false,
+                'last_synced_at'   => $config && $config->last_synced_at ? $config->last_synced_at->toIso8601String() : null,
             ],
             'branches'        => $branches,
+            'calendars'       => $calendars,
         ]);
     }
 
@@ -144,8 +157,11 @@ class CustomPageController extends Controller
         $companyId  = $request->input('companyId') ?: $request->input('company_id');
         $apiToken   = trim($request->input('api_token') ?? '');
         $baseUrl    = trim($request->input('base_url') ?? config('wess.default_base_url'));
-        $branchId   = $request->input('branch_id');
-        $branchName = trim($request->input('branch_name') ?? '');
+        $branchId      = $request->input('branch_id');
+        $branchName    = trim($request->input('branch_name') ?? '');
+        $calendarId    = $request->input('calendar_id');
+        $calendarName  = trim($request->input('calendar_name') ?? '');
+        $calendarUserId = trim($request->input('calendar_user_id') ?? '');
         $isSyncEnabled = $request->boolean('is_sync_enabled', true);
 
         if (empty($locationId)) {
@@ -178,17 +194,42 @@ class CustomPageController extends Controller
                 }
             }
 
+            // Resolve calendar name and user ID if not provided directly
+            $calendars = [];
+            try {
+                $calendarService = app(\App\Services\Ghl\GhlCalendarService::class);
+                $calendars = $calendarService->getCalendars($locationId);
+                if (!empty($calendarId)) {
+                    foreach ($calendars as $cal) {
+                        if ((string)$cal['id'] === (string)$calendarId) {
+                            if (empty($calendarName)) {
+                                $calendarName = $cal['name'] ?? 'Booking Calendar';
+                            }
+                            if (empty($calendarUserId)) {
+                                $calendarUserId = $cal['user_id'] ?? '';
+                            }
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                Log::info("Could not fetch CRM calendars during save: " . $e->getMessage());
+            }
+
             // 2. Save / Update in database
             $config = WessConfig::updateOrCreate(
                 ['location_id' => $locationId],
                 [
-                    'company_id'      => $companyId,
-                    'api_token'       => $apiToken,
-                    'base_url'        => $baseUrl,
-                    'branch_id'       => $branchId,
-                    'branch_name'     => $branchName,
-                    'is_sync_enabled' => $isSyncEnabled,
-                    'is_connected'    => true,
+                    'company_id'       => $companyId,
+                    'api_token'        => $apiToken,
+                    'base_url'         => $baseUrl,
+                    'branch_id'        => $branchId,
+                    'branch_name'      => $branchName,
+                    'calendar_id'      => $calendarId,
+                    'calendar_name'    => $calendarName,
+                    'calendar_user_id' => $calendarUserId,
+                    'is_sync_enabled'  => $isSyncEnabled,
+                    'is_connected'     => true,
                 ]
             );
 
@@ -198,6 +239,7 @@ class CustomPageController extends Controller
                 'message'      => 'WESS credentials verified and saved successfully! Connected as: ' . ($authData['user']['name'] ?? 'Active Vendor'),
                 'config'       => $config,
                 'branches'     => $branches,
+                'calendars'    => $calendars,
             ]);
         } catch (Exception $e) {
             return response()->json([
@@ -205,6 +247,36 @@ class CustomPageController extends Controller
                 'is_verified' => false,
                 'message'     => 'Failed to verify WESS credentials: ' . $e->getMessage(),
             ], 422);
+        }
+    }
+
+    /**
+     * Fetch available CRM Calendars dynamically
+     */
+    public function getCalendars(Request $request)
+    {
+        $locationId = $request->input('locationId') ?: $request->input('location_id');
+
+        if (empty($locationId)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Location ID is required.',
+            ], 422);
+        }
+
+        try {
+            $calendarService = app(\App\Services\Ghl\GhlCalendarService::class);
+            $calendars = $calendarService->getCalendars($locationId);
+
+            return response()->json([
+                'success'   => true,
+                'calendars' => $calendars,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Could not fetch CRM calendars: ' . $e->getMessage(),
+            ], 500);
         }
     }
 

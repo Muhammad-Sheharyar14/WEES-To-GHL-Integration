@@ -78,7 +78,9 @@ class WessSyncService
                     $this->ghlCalendarService->syncAppointmentToGhl(
                         $locationId, 
                         $appt, 
-                        true // Mask private details for public slot view (Excel Item A.4)
+                        true, // Mask private details for public slot view (Excel Item A.4)
+                        $config->calendar_id ?: null,
+                        $config->calendar_user_id ?: null
                     );
                     $syncedCount++;
                 } catch (Exception $e) {
