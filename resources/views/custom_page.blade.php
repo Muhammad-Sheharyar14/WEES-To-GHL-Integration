@@ -1087,7 +1087,7 @@
         <div class="brand-area">
             <div class="brand-logo-badge">W</div>
             <div class="header-titles">
-                <h1>WESS Integration <span style="font-size: 12.5px; font-weight: 600; color: var(--primary); background: var(--primary-light); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--primary-border);">GHL Sync</span></h1>
+                <h1>WESS Integration <span style="font-size: 12.5px; font-weight: 600; color: var(--primary); background: var(--primary-light); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--primary-border);">CRM Sync</span></h1>
                 <p>Ample Life &bull; Salon & Spa 2-way sync for appointments, clients, and calendar availability</p>
             </div>
         </div>
@@ -1121,8 +1121,8 @@
             <div class="switch-info">
                 <div class="switch-icon">⚡</div>
                 <div>
-                    <div class="switch-title">Location Master Sync Switch</div>
-                    <div class="switch-desc">Instantly toggle all 2-way appointment and contact sync operations for this sub-account.</div>
+                    <div class="switch-title">Account Master Sync Switch</div>
+                    <div class="switch-desc">Instantly toggle all 2-way appointment and contact sync operations for this account.</div>
                 </div>
             </div>
             <div class="toggle-wrapper">
@@ -1140,7 +1140,7 @@
             <div class="card">
                 <div class="card-header">
                     <h2 class="card-title">WESS API Credentials</h2>
-                    <p class="card-subtitle">Connect this sub-account to your WESS sandbox or production branch</p>
+                    <p class="card-subtitle">Connect this account to your WESS sandbox or production branch</p>
                 </div>
 
                 <form id="settingsForm">
@@ -1154,7 +1154,7 @@
                             <span class="label-badge">Required</span>
                         </label>
                         <div class="input-group">
-                            <input type="url" class="form-control" id="base_url" name="base_url" value="{{ $defaultWessBaseUrl }}" required autocomplete="off">
+                            <input type="url" class="form-control" id="base_url" name="base_url" placeholder="https://api.prelive.wessconnect.net/api/v1/online" required autocomplete="off">
                         </div>
                         <div class="form-hint">Sandbox: <code>https://api.prelive.wessconnect.net/api/v1/online</code></div>
                     </div>
@@ -1165,7 +1165,7 @@
                             <span class="label-badge">Required</span>
                         </label>
                         <div class="input-group">
-                            <input type="password" class="form-control" id="api_token" name="api_token" placeholder="e.g. 5|blMkzRnxDNQBGv8rs4kp6I1XwCT3dNUwXGsAhGbC..." required autocomplete="off">
+                            <input type="password" class="form-control" id="api_token" name="api_token" placeholder="Paste your WESS Bearer Auth Token" required autocomplete="off">
                             <button type="button" class="btn-toggle-pwd" id="toggleSecretBtn" onclick="toggleSecretVisibility()">Show</button>
                         </div>
                         <div class="form-hint">Generated under WESS Developer Portal / API Vendor Tokens.</div>
@@ -1174,15 +1174,14 @@
                     <div class="form-group">
                         <label class="form-label" for="branch_id">
                             <span>Associated WESS Branch</span>
-                            <span class="label-badge" id="branchLoadingBadge">Select Branch</span>
+                            <span class="label-badge" id="branchLoadingBadge">Live API</span>
                         </label>
                         <div class="input-group">
-                            <select class="form-control" id="branch_id" name="branch_id">
-                                <option value="1">Branch 1 (ID: 1)</option>
-                                <option value="2">Branch 2 (ID: 2)</option>
+                            <select class="form-control" id="branch_id" name="branch_id" required>
+                                <option value="">-- Connect API to Load Branches --</option>
                             </select>
                         </div>
-                        <div class="form-hint">Bookings and customer records will be assigned to this branch.</div>
+                        <div class="form-hint">Branches are loaded live from WESS API. Bookings and customers will be assigned to this branch.</div>
                     </div>
 
                     <div class="btn-actions">
@@ -1200,20 +1199,16 @@
             <div class="card">
                 <div class="card-header">
                     <h3 class="card-title">Connection Status</h3>
-                    <p class="card-subtitle">Live status across GoHighLevel & WESS</p>
+                    <p class="card-subtitle">Live status across CRM & WESS</p>
                 </div>
 
                 <div class="metric-list">
                     <div class="metric-item">
-                        <span class="metric-key">Sub-Account ID</span>
+                        <span class="metric-key">Account ID</span>
                         <span class="metric-val mono-val" id="dispLocationId">Detecting...</span>
                     </div>
                     <div class="metric-item">
-                        <span class="metric-key">Agency / Company ID</span>
-                        <span class="metric-val mono-val" id="dispCompanyId">-</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-key">GHL Authorization</span>
+                        <span class="metric-key">CRM Authorization</span>
                         <span class="metric-val" id="dispGhlStatus" style="color: var(--text-muted);">-</span>
                     </div>
                     <div class="metric-item">
@@ -1229,13 +1224,6 @@
                         <span class="metric-val" id="dispSyncEngine" style="color: var(--success);">Active</span>
                     </div>
                 </div>
-
-                <div class="info-card">
-                    <div class="info-icon">ℹ️</div>
-                    <div class="info-text">
-                        <strong>Automatic OAuth Resolution:</strong> When an Agency token exists, this page automatically generates and maintains a secure sub-account token without extra logins.
-                    </div>
-                </div>
             </div>
         </div>
     </div>
@@ -1248,7 +1236,7 @@
             <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
                 <div>
                     <h2 class="card-title">Activity & Webhook Logs</h2>
-                    <p class="card-subtitle">Live records of GHL appointment/contact events and WESS synchronization requests</p>
+                    <p class="card-subtitle">Live records of CRM appointment/contact events and WESS synchronization requests</p>
                 </div>
                 <button type="button" class="btn btn-secondary btn-sm" id="btnRefreshLogs" onclick="fetchLogs(currentLogsPage)">
                     <span id="refreshLogsIcon">↻</span>
@@ -1485,9 +1473,27 @@
 
     function populateBranches(branches, selectedBranchId = null) {
         const select = document.getElementById('branch_id');
-        if (!branches || branches.length === 0) return;
-
         select.innerHTML = '';
+
+        const badge = document.getElementById('branchLoadingBadge');
+        if (badge) {
+            badge.textContent = branches && branches.length > 0 ? `${branches.length} Live Branches` : 'Live API';
+        }
+
+        if (!branches || branches.length === 0) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '-- No branches returned by live API --';
+            select.appendChild(opt);
+            document.getElementById('dispBranchName').textContent = '-';
+            return;
+        }
+
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = '';
+        defaultOpt.textContent = '-- Select Branch --';
+        select.appendChild(defaultOpt);
+
         branches.forEach(b => {
             const opt = document.createElement('option');
             opt.value = b.id;
@@ -1499,8 +1505,10 @@
         });
 
         const selectedOption = select.options[select.selectedIndex];
-        if (selectedOption) {
+        if (selectedOption && selectedOption.value) {
             document.getElementById('dispBranchName').textContent = selectedOption.textContent;
+        } else {
+            document.getElementById('dispBranchName').textContent = '-';
         }
     }
 
@@ -1515,7 +1523,6 @@
 
             if (queryCompanyId) {
                 document.getElementById('companyId').value = queryCompanyId;
-                document.getElementById('dispCompanyId').textContent = queryCompanyId;
             }
 
             if (queryLocationId) {
@@ -1553,8 +1560,8 @@
                     }
                 }
             } else if (!queryLocationId) {
-                document.getElementById('dispLocationId').textContent = 'Direct Preview (No GHL Context)';
-                updateBadge(false, 'Open Inside GHL');
+                document.getElementById('dispLocationId').textContent = 'Direct Preview (No Account Context)';
+                updateBadge(false, 'Open Inside CRM');
             }
         } catch (error) {
             console.error('User Data Decryption Error:', error);
@@ -1571,7 +1578,6 @@
         }
         if (companyId) {
             document.getElementById('companyId').value = companyId;
-            document.getElementById('dispCompanyId').textContent = companyId;
         }
         if (userData.userId) {
             document.getElementById('userId').value = userData.userId;
@@ -1600,7 +1606,7 @@
         .then(data => {
             if (data.success) {
                 const dispGhl = document.getElementById('dispGhlStatus');
-                if (data.ghl_connected) {
+                if (data.crm_connected || data.ghl_connected) {
                     dispGhl.textContent = 'Active & Authorized';
                     dispGhl.style.color = 'var(--success)';
                 } else {
@@ -1618,8 +1624,7 @@
                     if (data.branches && data.branches.length > 0) {
                         populateBranches(data.branches, creds.branch_id);
                     } else if (creds.branch_id) {
-                        document.getElementById('branch_id').value = creds.branch_id;
-                        document.getElementById('dispBranchName').textContent = creds.branch_name || `Branch ${creds.branch_id}`;
+                        populateBranches([{ id: creds.branch_id, name: creds.branch_name || `Branch ${creds.branch_id}` }], creds.branch_id);
                     }
 
                     const dispWess = document.getElementById('dispWessStatus');
@@ -1643,7 +1648,7 @@
     function handleMasterToggleChange(isEnabled) {
         const locationId = document.getElementById('locationId').value;
         if (!locationId) {
-            notify('warning', 'Location Undetected', 'Open this page inside GoHighLevel sub-account to toggle sync.');
+            notify('warning', 'Account Undetected', 'Open this page inside your CRM account to toggle sync.');
             updateMasterToggleUI(!isEnabled);
             return;
         }
@@ -1701,8 +1706,8 @@
                 <tr>
                     <td colspan="5" class="logs-empty-state">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                        <div class="logs-empty-title">Location Context Required</div>
-                        <div class="logs-empty-desc">Open this page inside a GoHighLevel sub-account to view live activity and webhook logs.</div>
+                        <div class="logs-empty-title">Account Context Required</div>
+                        <div class="logs-empty-desc">Open this page inside your CRM account to view live activity and webhook logs.</div>
                     </td>
                 </tr>
             `;
@@ -1751,7 +1756,7 @@
                     <td colspan="5" class="logs-empty-state">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
                         <div class="logs-empty-title">No Activity Logs Yet</div>
-                        <div class="logs-empty-desc">Incoming GoHighLevel webhooks (appointments, contacts, uninstalls) and WESS sync operations will appear here in real-time.</div>
+                        <div class="logs-empty-desc">Incoming CRM webhooks (appointments, contacts, uninstalls) and WESS sync operations will appear here in real-time.</div>
                     </td>
                 </tr>
             `;
@@ -1762,6 +1767,7 @@
             const statusClass = item.is_success ? 'success' : (item.response_status ? 'error' : 'neutral');
             const statusLabel = item.response_status ? `${item.response_status}` : 'Pending';
             const methodClass = (item.method || 'POST').toLowerCase();
+            const displaySource = item.source === 'ghl_webhook' ? 'CRM Webhook' : (item.source === 'wess_sync' ? 'WESS Sync' : (item.source || '—'));
 
             return `
                 <tr>
@@ -1772,7 +1778,7 @@
                     </td>
                     <td>
                         <strong style="color: var(--text-main);">${escapeHtml(item.event_type)}</strong>
-                        <div style="font-size: 11.5px; color: var(--text-subtle);">${escapeHtml(item.source)}</div>
+                        <div style="font-size: 11.5px; color: var(--text-subtle);">${escapeHtml(displaySource)}</div>
                     </td>
                     <td>
                         <span class="badge-method ${methodClass}">${escapeHtml(item.method)}</span>
@@ -1851,7 +1857,7 @@
 
         document.getElementById('modalMethod').textContent = item.method || 'POST';
         document.getElementById('modalStatus').textContent = item.response_status ? `${item.response_status}` : '—';
-        document.getElementById('modalSource').textContent = item.source || '—';
+        document.getElementById('modalSource').textContent = item.source === 'ghl_webhook' ? 'CRM Webhook' : (item.source === 'wess_sync' ? 'WESS Sync' : (item.source || '—'));
         document.getElementById('modalDate').textContent   = item.created_at || '—';
         document.getElementById('modalEndpoint').value     = item.endpoint || '—';
 

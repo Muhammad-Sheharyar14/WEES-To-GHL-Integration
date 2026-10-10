@@ -25,17 +25,15 @@ class CustomPageController extends Controller
      */
     public function index(Request $request)
     {
-        $sharedSecretKey   = config('ghl.shared_secret', '');
-        $defaultWessBaseUrl = config('wess.default_base_url', 'https://api.prelive.wessconnect.net/api/v1/online');
+        $sharedSecretKey = config('ghl.shared_secret', '');
 
-        return view('custom_page', compact('sharedSecretKey', 'defaultWessBaseUrl'));
+        return view('custom_page', compact('sharedSecretKey'));
     }
 
     /**
-     * Initialize / fetch location status, GHL tokens, and WESS credentials.
-     * Implements the exact token resolution logic requested:
-     * 1. Check if location already has a valid GHL token (auto-refresh if expired).
-     * 2. If not, check if an Agency token exists for this company, and generate a Location token.
+     * Initialize / fetch account status, CRM tokens, and WESS credentials.
+     * 1. Check if account already has a valid token (auto-refresh if expired).
+     * 2. If an Agency token exists, resolve an Account token.
      * 3. Return WESS configuration and master toggle switch state.
      */
     public function getCredentials(Request $request)
@@ -46,11 +44,11 @@ class CustomPageController extends Controller
         if (empty($locationId)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Location ID is required. Please ensure this page is opened inside your GoHighLevel sub-account.'
+                'message' => 'Account ID is required. Please ensure this page is opened inside your CRM account.'
             ], 422);
         }
 
-        // 1. Resolve / Ensure GHL Location Token
+        // 1. Resolve CRM Account Token
         $ghlToken = null;
         $ghlStatus = 'disconnected';
         $tokenError = null;
@@ -62,42 +60,44 @@ class CustomPageController extends Controller
             }
         } catch (Exception $e) {
             $tokenError = $e->getMessage();
-            Log::warning("Token resolution warning for location {$locationId}: " . $e->getMessage());
+            Log::warning("Token resolution warning for account {$locationId}: " . $e->getMessage());
         }
 
-        // 2. Fetch WESS Configuration
+        // 2. Fetch WESS Configuration (No fallback credentials)
         $config = WessConfig::where('location_id', $locationId)->first();
 
         $branches = [];
-        if ($config && !empty($config->api_token)) {
+        if ($config && !empty($config->api_token) && !empty($config->base_url)) {
             try {
                 $client = new WessClient($config->api_token, $config->base_url);
                 $branches = $client->getBranches();
             } catch (Exception $e) {
-                // If branch retrieval fails, continue gracefully
+                // If branch retrieval fails, log gracefully
                 Log::info("Could not fetch branches during custom page init: " . $e->getMessage());
             }
         }
 
         return response()->json([
-            'success'       => true,
-            'location_id'   => $locationId,
-            'company_id'    => $companyId,
-            'ghl_connected' => (bool)$ghlToken,
-            'ghl_status'    => $ghlStatus,
-            'token_error'   => $tokenError,
-            'is_verified'   => $config ? (bool)$config->is_connected : false,
+            'success'         => true,
+            'location_id'     => $locationId,
+            'company_id'      => $companyId,
+            'ghl_connected'   => (bool)$ghlToken,
+            'crm_connected'   => (bool)$ghlToken,
+            'ghl_status'      => $ghlStatus,
+            'crm_status'      => $ghlStatus,
+            'token_error'     => $tokenError,
+            'is_verified'     => $config ? (bool)$config->is_connected : false,
             'is_sync_enabled' => $config ? (bool)$config->is_sync_enabled : true,
-            'credentials'   => [
+            'credentials'     => [
                 'api_token'       => $config ? $config->api_token : '',
-                'base_url'        => $config ? $config->base_url : config('wess.default_base_url'),
-                'branch_id'       => $config ? $config->branch_id : config('wess.default_branch_id', 1),
+                'base_url'        => $config ? $config->base_url : '',
+                'branch_id'       => $config ? $config->branch_id : '',
                 'branch_name'     => $config ? $config->branch_name : '',
                 'is_sync_enabled' => $config ? (bool)$config->is_sync_enabled : true,
                 'is_connected'    => $config ? (bool)$config->is_connected : false,
                 'last_synced_at'  => $config && $config->last_synced_at ? $config->last_synced_at->toIso8601String() : null,
             ],
-            'branches'      => $branches,
+            'branches'        => $branches,
         ]);
     }
 

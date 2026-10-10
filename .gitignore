@@ -27,3 +27,4 @@ help/
 credentials.txt
 test_wess_api.php
 *.xlsx
+*.zip
