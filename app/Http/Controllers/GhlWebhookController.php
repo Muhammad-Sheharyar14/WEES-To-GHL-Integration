@@ -204,8 +204,20 @@ class GhlWebhookController extends Controller
             return;
         }
 
+        if (str_contains($type, 'delete')) {
+            $log->update([
+                'response_status' => 200,
+                'response_body'   => json_encode(['status' => 'acknowledged', 'message' => 'Contact deletion event received and logged.']),
+            ]);
+            return;
+        }
+
         $phone = $payload['phone'] ?? ($payload['contact']['phone'] ?? '');
         if (empty($phone)) {
+            $log->update([
+                'response_status' => 200,
+                'response_body'   => 'Skipped: No phone number provided in contact payload.',
+            ]);
             return;
         }
 
