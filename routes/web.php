@@ -1,6 +1,5 @@
 <?php
 
-use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CustomPageController;
 use App\Http\Controllers\GhlOAuthController;
 use App\Http\Controllers\GhlWebhookController;
@@ -60,17 +59,3 @@ Route::get('/api/custom-page/logs', [CustomPageController::class, 'getLogs']);
 */
 Route::get('/logs', [LogViewerController::class, 'index'])->name('logs.index');
 Route::get('/api/logs', [LogViewerController::class, 'getLogs'])->name('logs.api');
-
-/*
-|--------------------------------------------------------------------------
-| Admin Authentication
-|--------------------------------------------------------------------------
-*/
-Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
-Route::post('/login', [AuthController::class, 'login'])->name('login.post');
-Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
-
-Route::middleware('auth')->group(function () {
-    Route::get('/profile', [AuthController::class, 'showProfile'])->name('profile');
-    Route::post('/profile', [AuthController::class, 'updateProfile'])->name('profile.update');
-});
