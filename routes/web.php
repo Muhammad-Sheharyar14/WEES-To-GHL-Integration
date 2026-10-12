@@ -101,3 +101,29 @@ Route::get('/run-oc', function () {
     }
 });
 
+Route::get('/run-sync', function (\Illuminate\Http\Request $request) {
+    try {
+        $testParam = $request->query('test');
+        $params = [];
+        if ($testParam !== null && is_numeric($testParam)) {
+            $limit = max(1, (int)$testParam);
+            $params['--limit'] = $limit;
+            $params['--test']  = true;
+        }
+
+        Artisan::call('wess:sync', $params);
+        $output = Artisan::output();
+        return '<pre style="background:#0f172a;color:#10b981;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
+            . "=== WESS SYNC COMPLETED" . (isset($limit) ? " [TEST RUN: {$limit} appointment(s)]" : "") . " ===\n\n" 
+            . e($output ?: "No locations to sync.\n") 
+            . '</pre>';
+    } catch (\Throwable $e) {
+        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
+            . "=== WESS SYNC ERROR ===\n\n" 
+            . e($e->getMessage()) . "\n\n" 
+            . e($e->getTraceAsString()) 
+            . '</pre>';
+    }
+});
+
+

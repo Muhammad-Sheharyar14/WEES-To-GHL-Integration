@@ -143,10 +143,74 @@ class WessClient
     }
 
     /**
+     * Parse raw phone number into country code and local mobile number for WESS
+     */
+    public static function parsePhoneNumber(string $phone): array
+    {
+        $raw = trim($phone);
+        $hasPlus = str_starts_with($raw, '+');
+        $digits = preg_replace('/[^0-9]/', '', $raw);
+
+        $countryCode = '65'; // Default to Singapore (+65)
+        $mobile = $digits;
+
+        if ($hasPlus) {
+            // E.g., +6591234567, +60123456789, +15551234567, etc.
+            if (str_starts_with($digits, '65') && strlen($digits) >= 10) {
+                $countryCode = '65';
+                $mobile = substr($digits, 2);
+            } elseif (str_starts_with($digits, '60') && strlen($digits) >= 11) {
+                $countryCode = '60';
+                $mobile = substr($digits, 2);
+            } elseif (str_starts_with($digits, '1') && strlen($digits) == 11) {
+                $countryCode = '1';
+                $mobile = substr($digits, 1);
+            } elseif (str_starts_with($digits, '44') && strlen($digits) >= 11) {
+                $countryCode = '44';
+                $mobile = substr($digits, 2);
+            } elseif (str_starts_with($digits, '61') && strlen($digits) >= 11) {
+                $countryCode = '61';
+                $mobile = substr($digits, 2);
+            } elseif (str_starts_with($digits, '91') && strlen($digits) >= 12) {
+                $countryCode = '91';
+                $mobile = substr($digits, 2);
+            }
+        } else {
+            // No leading plus: e.g. 6591234567 or 91234567
+            if (str_starts_with($digits, '65') && strlen($digits) == 10) {
+                $countryCode = '65';
+                $mobile = substr($digits, 2);
+            } elseif (str_starts_with($digits, '60') && (strlen($digits) == 11 || strlen($digits) == 12)) {
+                $countryCode = '60';
+                $mobile = substr($digits, 2);
+            } elseif (strlen($digits) == 8) {
+                $countryCode = '65';
+                $mobile = $digits;
+            }
+        }
+
+        return [
+            'country_code' => $countryCode,
+            'mobile'       => $mobile,
+        ];
+    }
+
+    /**
      * Create customer in WESS
      */
     public function createCustomer(int|string $branchId, array $data): array
     {
+        // Automatically normalize phone fields for WESS API requirements
+        if (empty($data['phone_mobile']) && (!empty($data['phone_number']) || !empty($data['phone']))) {
+            $rawPhone = $data['phone_number'] ?? $data['phone'];
+            $parsed = self::parsePhoneNumber($rawPhone);
+            $data['phone_mobile_country_code'] = $data['phone_mobile_country_code'] ?? $parsed['country_code'];
+            $data['phone_mobile']              = $parsed['mobile'];
+        }
+
+        // Clean up internal non-WESS aliases
+        unset($data['phone_number'], $data['phone']);
+
         $response = $this->request('POST', "{$this->baseUrl}/branches/{$branchId}/customers", [], $data);
 
         if (!$response->successful()) {

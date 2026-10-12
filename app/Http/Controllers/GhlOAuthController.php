@@ -48,22 +48,17 @@ class GhlOAuthController extends Controller
         if (!$code) {
             return view('oauth_result', [
                 'success' => false,
-                'message' => 'No authorization code received from GoHighLevel.',
+                'message' => 'No authorization code received from the authorization server.',
             ]);
         }
 
         try {
-            // Exchange code with GHL
+            // Exchange code with CRM
             $tokenRecord = $this->authService->exchangeCode($code);
-
-            $isAgency = ($tokenRecord->user_type === 'Company') || (empty($tokenRecord->location_id) && !empty($tokenRecord->company_id));
 
             return view('oauth_result', [
                 'success'    => true,
-                'isAgency'   => $isAgency,
-                'message'    => $isAgency 
-                    ? 'WESS Integration Agency Connected Successfully! You can now manage WESS settings for each sub-account directly inside their sub-account custom page.'
-                    : 'WESS Integration Sub-Account Connected Successfully!',
+                'message'    => 'Account connected successfully.',
                 'token'      => $tokenRecord,
                 'locationId' => $tokenRecord->location_id,
                 'companyId'  => $tokenRecord->company_id,

@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ ($success ?? false) ? 'Authorization Successful — WESS Integration' : 'Authorization Failed — WESS Integration' }}</title>
+    <title>{{ ($success ?? false) ? 'Connected Successfully — WESS Integration' : 'Authorization Failed — WESS Integration' }}</title>
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
     <style>
         :root {
@@ -44,7 +44,7 @@
             border: 1px solid var(--border-color);
             border-radius: 20px;
             box-shadow: 0 16px 36px -10px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(226, 232, 240, 0.8);
-            max-width: 580px;
+            max-width: 540px;
             width: 100%;
             padding: 44px 36px;
             text-align: center;
@@ -97,11 +97,18 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
+            background: #f1f5f9;
+            border: 1px solid var(--border-color);
             border-radius: 30px;
             padding: 5px 16px;
-            margin-bottom: 16px;
+            margin-bottom: 18px;
+        }
+
+        .badge-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--success);
         }
 
         .title {
@@ -119,36 +126,81 @@
             margin-bottom: 24px;
         }
 
-        .details-box {
+        .guide-box {
             background: #f8fafc;
-            border: 1px solid #e2e8f0;
+            border: 1px solid var(--border-color);
             border-radius: 14px;
-            padding: 16px 20px;
-            margin-bottom: 24px;
+            padding: 20px 22px;
+            margin-bottom: 22px;
             text-align: left;
         }
 
-        .detail-row {
+        .guide-header {
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 10px 14px;
-            margin-top: 8px;
-            font-size: 13.5px;
+            gap: 8px;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 14px;
         }
 
-        .detail-row code {
-            font-family: monospace;
-            font-size: 13px;
-            font-weight: 600;
-            color: #2563eb;
+        .guide-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .guide-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            background: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-size: 13.5px;
+            line-height: 1.5;
+            color: var(--text-main);
+        }
+
+        .step-num {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
             background: #eff6ff;
-            padding: 2px 8px;
-            border-radius: 6px;
+            color: var(--primary);
+            font-size: 12px;
+            font-weight: 800;
+            flex-shrink: 0;
             border: 1px solid #bfdbfe;
+            margin-top: 1px;
+        }
+
+        .step-content {
+            flex: 1;
+        }
+
+        .step-content strong {
+            color: var(--text-main);
+            font-weight: 700;
+        }
+
+        .close-hint {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 13px;
+            color: var(--text-muted);
+            background: #f1f5f9;
+            padding: 7px 16px;
+            border-radius: 30px;
+            border: 1px solid var(--border-color);
         }
 
         .btn {
@@ -174,16 +226,6 @@
         .btn-primary:hover {
             background: var(--primary-hover);
         }
-
-        .btn-secondary {
-            background: #f1f5f9;
-            color: #334155;
-            border: 1px solid #cbd5e1;
-        }
-
-        .btn-secondary:hover {
-            background: #e2e8f0;
-        }
     </style>
 </head>
 <body>
@@ -200,45 +242,46 @@
             </div>
 
             <div class="brand-badge">
-                <span style="font-weight: 800; color: #2563eb; font-size: 15px;">WESS</span>
-                <span style="font-size: 12px; font-weight: 600; color: #64748b;">GHL Integration</span>
+                <span class="badge-dot"></span>
+                <span style="font-weight: 700; color: var(--text-main); font-size: 13px;">WESS Integration</span>
             </div>
 
-            <h1 class="title">
-                {{ ($isAgency ?? false) ? 'Agency Connected Successfully!' : 'Sub-Account Connected Successfully!' }}
-            </h1>
+            <h1 class="title">Connected Successfully!</h1>
 
             <p class="subtitle">
-                {{ $message ?? 'WESS Integration is now authorized and connected to GoHighLevel.' }}
+                Your account is now connected and ready for WESS integration.
             </p>
 
-            <div class="details-box">
-                <div style="font-size: 11.5px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; justify-content: space-between;">
-                    <span>Authorization Details</span>
-                    <span style="background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; border-radius: 20px; padding: 2px 8px; font-size: 11px; font-weight: 600;">
-                        ● Active & Stored
-                    </span>
+            <div class="guide-box">
+                <div class="guide-header">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    <span>How to Complete Setup</span>
                 </div>
-
-                @if(!empty($companyId))
-                    <div class="detail-row">
-                        <span style="color: #475569; font-weight: 600;">Agency / Company ID</span>
-                        <code>{{ $companyId }}</code>
+                <div class="guide-steps">
+                    <div class="guide-step">
+                        <div class="step-num">1</div>
+                        <div class="step-content">
+                            Return to your <strong>CRM dashboard</strong>.
+                        </div>
                     </div>
-                @endif
-
-                @if(!empty($locationId))
-                    <div class="detail-row">
-                        <span style="color: #475569; font-weight: 600;">Sub-Account / Location ID</span>
-                        <code>{{ $locationId }}</code>
+                    <div class="guide-step">
+                        <div class="step-num">2</div>
+                        <div class="step-content">
+                            In the left-side menu, click <strong>WESS Settings</strong>.
+                        </div>
                     </div>
-                @endif
+                    <div class="guide-step">
+                        <div class="step-num">3</div>
+                        <div class="step-content">
+                            Enter your WESS API credentials, choose your branch & booking calendar, and click <strong>Save & Connect</strong>.
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-                <a href="{{ route('custom.page') }}" class="btn btn-primary">
-                    Open Custom Settings &rarr;
-                </a>
+            <div class="close-hint">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>
+                <span>You can now safely close this window.</span>
             </div>
 
         @else
@@ -255,7 +298,7 @@
             <h1 class="title">Authorization Could Not Complete</h1>
 
             <p class="subtitle">
-                {{ $message ?? 'An error occurred while authorizing the application with your GoHighLevel account.' }}
+                {{ $message ?? 'An error occurred while authorizing your account.' }}
             </p>
 
             <div style="display: flex; gap: 12px; justify-content: center;">

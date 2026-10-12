@@ -27,7 +27,7 @@ class ExampleTest extends TestCase
             'locationId' => 'loc_test_123',
         ]);
 
-        $response->assertSee('Sub-Account Connected Successfully!');
-        $response->assertSee('loc_test_123');
+        $response->assertSee('Connected Successfully!');
+        $response->assertSee('WESS Settings');
     }
 }

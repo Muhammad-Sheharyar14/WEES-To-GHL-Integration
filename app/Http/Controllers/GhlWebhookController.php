@@ -8,6 +8,7 @@ use App\Models\WebhookLog;
 use App\Services\Ghl\GhlCalendarService;
 use App\Services\Wess\WessClient;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Exception;
 
@@ -153,6 +154,47 @@ class GhlWebhookController extends Controller
         $appointmentId = $appointment['id'] ?? $payload['appointmentId'] ?? ($payload['id'] ?? null);
         $contactId     = $appointment['contactId'] ?? $payload['contactId'] ?? null;
         $status        = strtolower($appointment['appointmentStatus'] ?? $payload['appointmentStatus'] ?? '');
+        $notes         = (string)($appointment['notes'] ?? $payload['notes'] ?? ($payload['appointment']['notes'] ?? ''));
+        $title         = (string)($appointment['title'] ?? $payload['title'] ?? ($payload['appointment']['title'] ?? ''));
+
+        // Echo Loop Prevention:
+        // When WESS sync pushes an appointment to GHL, GHL triggers AppointmentCreate / AppointmentUpdate.
+        // We debounce this within 45 seconds (GHL webhooks trigger in 1-5 seconds):
+        // 1. Origin cache lock (45-second TTL from syncAppointmentToGhl)
+        // 2. On AppointmentCreate, also check WESS signatures in notes or title
+        $isCancellation = str_contains($type, 'delete') || str_contains($type, 'cancel') || in_array($status, ['cancelled', 'canceled', 'deleted']);
+        if (!$isCancellation) {
+            if ($appointmentId && Cache::has("wess_origin_appt_{$appointmentId}")) {
+                Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} due to active 45s sync debounce lock.");
+                $log->update([
+                    'response_status' => 200,
+                    'response_body'   => json_encode([
+                        'status'  => 'skipped',
+                        'message' => 'Loop prevention: Appointment originated from recent WESS sync. No re-sync needed.',
+                    ]),
+                ]);
+                return;
+            }
+
+            if (str_contains($type, 'create')) {
+                if (
+                    str_contains($notes, 'WESS Booking ID:') ||
+                    str_contains($notes, 'WESS ID:') ||
+                    str_contains($title, '(Booked Slot)') ||
+                    str_starts_with($title, 'WESS Appt:')
+                ) {
+                    Log::info("Loop prevention: Skipped AppointmentCreate webhook {$appointmentId} as it contains WESS sync signature.");
+                    $log->update([
+                        'response_status' => 200,
+                        'response_body'   => json_encode([
+                            'status'  => 'skipped',
+                            'message' => 'Loop prevention: AppointmentCreate has WESS sync signature. Skipping duplicate creation.',
+                        ]),
+                    ]);
+                    return;
+                }
+            }
+        }
 
         try {
             // Cancellation / Deletion Event
@@ -203,11 +245,13 @@ class GhlWebhookController extends Controller
                 $customer = $wessClient->lookupCustomerByPhone($phone);
 
                 if (!$customer) {
+                    $phoneData = WessClient::parsePhoneNumber($phone);
                     $customer = $wessClient->createCustomer($branchId, [
-                        'first_name'   => $firstName ?: 'Customer',
-                        'last_name'    => $lastName ?: '',
-                        'phone_number' => $phone,
-                        'email'        => $email ?: '',
+                        'first_name'                => $firstName ?: 'Customer',
+                        'last_name'                 => $lastName ?: '',
+                        'phone_mobile_country_code' => $phoneData['country_code'],
+                        'phone_mobile'              => $phoneData['mobile'],
+                        'email'                     => $email ?: '',
                     ]);
                 }
             }
@@ -227,17 +271,37 @@ class GhlWebhookController extends Controller
                 }
             }
 
+            // 2. Book appointment in WESS
+            $wessAppointment = null;
+            if (!empty($customer['id'])) {
+                $services = $wessClient->getServices($branchId);
+                $serviceId = $services[0]['id'] ?? ($services[0]['product_id'] ?? 1223);
+
+                $apptDate = !empty($startTime) ? date('Y-m-d H:i:s', strtotime($startTime)) : now()->format('Y-m-d H:i:s');
+
+                $bookingPayload = [
+                    'customer_id' => (int)$customer['id'],
+                    'date'        => $apptDate,
+                    'items'       => [
+                        ['product_id' => $serviceId ?: 1223]
+                    ],
+                ];
+
+                $wessAppointment = $wessClient->bookAppointment($branchId, $bookingPayload);
+            }
+
             $endpoint = "{$config->base_url}/branches/{$branchId}/appointments";
             $log->update([
                 'endpoint'        => $endpoint,
                 'method'          => 'POST',
                 'response_status' => 200,
                 'response_body'   => json_encode([
-                    'status'         => 'synced',
-                    'appointment_id' => $appointmentId,
-                    'wess_customer'  => $customer,
-                    'branch_id'      => $branchId,
-                    'start_time'     => $startTime,
+                    'status'           => 'synced',
+                    'appointment_id'   => $appointmentId,
+                    'wess_customer'    => $customer,
+                    'wess_appointment' => $wessAppointment,
+                    'branch_id'        => $branchId,
+                    'start_time'       => $startTime,
                 ]),
             ]);
 
@@ -282,7 +346,21 @@ class GhlWebhookController extends Controller
         $lastName  = $contact['lastName'] ?? ($payload['lastName'] ?? '');
         $email     = $contact['email'] ?? ($payload['email'] ?? '');
         $name      = $contact['name'] ?? ($payload['name'] ?? '');
-        $ghlId     = $contact['id'] ?? ($payload['id'] ?? null);
+        $ghlId     = $contact['id'] ?? ($payload['id'] ?? ($payload['contactId'] ?? null));
+
+        // Echo Loop Prevention:
+        // Ignore ContactUpdate webhooks that were recently triggered by our own custom fields update
+        if ($ghlId && Cache::has("wess_origin_contact_{$ghlId}")) {
+            Log::info("Loop prevention: Skipped contact webhook for contact {$ghlId} as it was recently updated by our system.");
+            $log->update([
+                'response_status' => 200,
+                'response_body'   => json_encode([
+                    'status'  => 'skipped',
+                    'message' => 'Loop prevention: Contact update originated from internal sync. No action needed.',
+                ]),
+            ]);
+            return;
+        }
 
         if (empty($firstName) && !empty($name)) {
             $parts     = explode(' ', trim($name), 2);
@@ -307,11 +385,13 @@ class GhlWebhookController extends Controller
 
             if (!$customer) {
                 $endpoint = "{$config->base_url}/branches/{$branchId}/customers";
+                $phoneData = WessClient::parsePhoneNumber($phone);
                 $customer = $wessClient->createCustomer($branchId, [
-                    'first_name'   => $firstName ?: 'Customer',
-                    'last_name'    => $lastName ?: '',
-                    'phone_number' => $phone,
-                    'email'        => $email ?: '',
+                    'first_name'                => $firstName ?: 'Customer',
+                    'last_name'                 => $lastName ?: '',
+                    'phone_mobile_country_code' => $phoneData['country_code'],
+                    'phone_mobile'              => $phoneData['mobile'],
+                    'email'                     => $email ?: '',
                 ]);
             }
 

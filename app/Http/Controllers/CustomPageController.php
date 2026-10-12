@@ -67,7 +67,7 @@ class CustomPageController extends Controller
         $calendars = [];
         try {
             $calendarService = app(\App\Services\Ghl\GhlCalendarService::class);
-            $calendars = $calendarService->getCalendars($locationId);
+            $calendars = $calendarService->getCalendars($locationId, $companyId);
         } catch (Exception $e) {
             Log::info("Could not fetch CRM calendars during custom page init: " . $e->getMessage());
         }
@@ -96,7 +96,7 @@ class CustomPageController extends Controller
             'crm_status'      => $ghlStatus,
             'token_error'     => $tokenError,
             'is_verified'     => $config ? (bool)$config->is_connected : false,
-            'is_sync_enabled' => $config ? (bool)$config->is_sync_enabled : true,
+            'is_sync_enabled' => $config ? (bool)$config->is_sync_enabled : false,
             'credentials'     => [
                 'api_token'        => $config ? $config->api_token : '',
                 'base_url'         => $config ? $config->base_url : '',
@@ -105,7 +105,7 @@ class CustomPageController extends Controller
                 'calendar_id'      => $config ? $config->calendar_id : '',
                 'calendar_name'    => $config ? $config->calendar_name : '',
                 'calendar_user_id' => $config ? $config->calendar_user_id : '',
-                'is_sync_enabled'  => $config ? (bool)$config->is_sync_enabled : true,
+                'is_sync_enabled'  => $config ? (bool)$config->is_sync_enabled : false,
                 'is_connected'     => $config ? (bool)$config->is_connected : false,
                 'last_synced_at'   => $config && $config->last_synced_at ? $config->last_synced_at->toIso8601String() : null,
             ],
@@ -265,8 +265,9 @@ class CustomPageController extends Controller
         }
 
         try {
+            $companyId = $request->input('companyId') ?: $request->input('company_id');
             $calendarService = app(\App\Services\Ghl\GhlCalendarService::class);
-            $calendars = $calendarService->getCalendars($locationId);
+            $calendars = $calendarService->getCalendars($locationId, $companyId);
 
             return response()->json([
                 'success'   => true,
@@ -286,6 +287,7 @@ class CustomPageController extends Controller
     public function toggleSync(Request $request)
     {
         $locationId = $request->input('locationId') ?: $request->input('location_id');
+        $companyId  = $request->input('companyId') ?: $request->input('company_id');
         $enabled    = $request->boolean('is_sync_enabled');
 
         if (empty($locationId)) {
@@ -295,21 +297,19 @@ class CustomPageController extends Controller
             ], 422);
         }
 
-        $config = WessConfig::where('location_id', $locationId)->first();
-        if (!$config) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Please save your WESS credentials first before enabling synchronization.'
-            ], 422);
+        $config = WessConfig::firstOrNew(['location_id' => $locationId]);
+        if ($companyId) {
+            $config->company_id = $companyId;
         }
-
         $config->is_sync_enabled = $enabled;
         $config->save();
 
         return response()->json([
             'success'         => true,
-            'is_sync_enabled' => $config->is_sync_enabled,
-            'message'         => $config->is_sync_enabled ? 'Sync is now ACTIVE for this location.' : 'Sync is now PAUSED for this location.',
+            'is_sync_enabled' => (bool)$config->is_sync_enabled,
+            'message'         => $config->is_sync_enabled 
+                ? ($config->is_connected ? 'Sync is now ACTIVE for this account.' : 'Sync is enabled. (Will sync once WESS credentials are saved below).') 
+                : 'Sync is now PAUSED for this account.',
         ]);
     }
 

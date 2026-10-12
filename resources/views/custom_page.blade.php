@@ -998,8 +998,8 @@
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
             border: 1px solid var(--border-color);
             width: 100%;
-            max-width: 780px;
-            max-height: 88vh;
+            max-width: 820px;
+            max-height: 90vh;
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -1018,6 +1018,7 @@
             align-items: center;
             justify-content: space-between;
             background-color: #ffffff;
+            flex-shrink: 0;
         }
 
         .modal-title-area {
@@ -1050,15 +1051,32 @@
 
         .modal-body {
             padding: 20px 22px;
-            overflow-y: auto;
-            scrollbar-width: none;
+            overflow-y: auto !important;
+            flex: 1 1 auto;
+            min-height: 0; /* CRITICAL: Enables flex child scrolling in Chrome/Edge */
+            max-height: calc(90vh - 130px);
+            scrollbar-width: thin;
+            scrollbar-color: #94a3b8 #f1f5f9;
             display: flex;
             flex-direction: column;
-            gap: 18px;
+            gap: 16px;
         }
 
         .modal-body::-webkit-scrollbar {
-            display: none;
+            width: 8px;
+        }
+
+        .modal-body::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+
+        .modal-body::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        .modal-body::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
         }
 
         .modal-meta-grid {
@@ -1069,6 +1087,7 @@
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
             padding: 14px 16px;
+            flex-shrink: 0;
         }
 
         .meta-field-label {
@@ -1090,8 +1109,10 @@
         .code-box-wrapper {
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
-            overflow: hidden;
             background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
         }
 
         .code-box-header {
@@ -1104,6 +1125,7 @@
             font-size: 12.5px;
             font-weight: 700;
             color: var(--text-muted);
+            border-radius: var(--radius-md) var(--radius-md) 0 0;
         }
 
         .code-box-header button {
@@ -1124,21 +1146,50 @@
 
         .code-block {
             margin: 0;
-            padding: 14px;
-            background: #fdfdfd;
-            font-family: 'JetBrains Mono', monospace;
+            padding: 14px 16px;
+            background: #f8fafc;
+            font-family: 'JetBrains Mono', Consolas, monospace;
             font-size: 12.5px;
-            line-height: 1.5;
+            line-height: 1.6;
             color: #0f172a;
-            max-height: 240px;
-            overflow-y: auto;
+            max-height: 250px;
+            min-height: 90px;
+            overflow-y: scroll !important;
+            overflow-x: auto !important;
+            overscroll-behavior: contain;
             white-space: pre-wrap;
-            word-break: break-all;
-            scrollbar-width: none;
+            word-break: break-word;
+            scrollbar-width: thin;
+            scrollbar-color: #94a3b8 #f1f5f9;
+            border-radius: 0 0 var(--radius-md) var(--radius-md);
         }
 
         .code-block::-webkit-scrollbar {
-            display: none;
+            width: 8px;
+            height: 8px;
+        }
+
+        .code-block::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 0 0 var(--radius-md) 0;
+        }
+
+        .code-block::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 4px;
+        }
+
+        .code-block::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+
+        .code-block::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        .code-block::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
         }
 
         .modal-footer {
@@ -1211,9 +1262,9 @@
 
         <div class="tabs-nav-right">
             <div class="nav-sync-toggle-box" title="Toggle bidirectional synchronization for appointments and contacts">
-                <span class="toggle-status-text" id="toggleStatusLabel">Sync Active</span>
+                <span class="toggle-status-text" id="toggleStatusLabel">Sync Paused</span>
                 <label class="switch-label">
-                    <input type="checkbox" id="masterSyncToggle" checked onchange="handleMasterToggleChange(this.checked)">
+                    <input type="checkbox" id="masterSyncToggle" onchange="handleMasterToggleChange(this.checked)">
                     <span class="switch-slider"></span>
                 </label>
             </div>
@@ -1277,7 +1328,7 @@
                     <div class="form-group">
                         <label class="form-label" for="calendar_id">
                             <span>CRM Booking Calendar</span>
-                            <span class="label-badge" id="calendarLoadingBadge">Live API</span>
+                            <span class="label-badge" id="calendarLoadingBadge" onclick="reloadCrmCalendars()" style="cursor: pointer;" title="Click to refresh calendars from CRM">Live API ↻</span>
                         </label>
                         <div class="input-group">
                             <select class="form-control" id="calendar_id" name="calendar_id" required>
@@ -1445,8 +1496,15 @@
                 <div id="modalErrorMessage" style="font-family: 'JetBrains Mono', monospace; font-size: 12px;"></div>
             </div>
 
+            <!-- View Selector Tabs: Both | Payload | Response -->
+            <div style="display: flex; gap: 8px; align-items: center; justify-content: flex-start; padding: 4px 0;">
+                <button type="button" class="btn btn-sm btn-primary" id="modalTabBoth" onclick="switchModalView('both')">View Both</button>
+                <button type="button" class="btn btn-sm btn-secondary" id="modalTabPayload" onclick="switchModalView('payload')">Expand Payload Only</button>
+                <button type="button" class="btn btn-sm btn-secondary" id="modalTabResponse" onclick="switchModalView('response')">Expand Response Only</button>
+            </div>
+
             <!-- Payload Box -->
-            <div class="code-box-wrapper">
+            <div class="code-box-wrapper" id="modalPayloadWrapper">
                 <div class="code-box-header">
                     <span>Sent Payload / Webhook Data</span>
                     <button type="button" onclick="copyModalText('modalPayload')">Copy JSON</button>
@@ -1455,7 +1513,7 @@
             </div>
 
             <!-- Response Box -->
-            <div class="code-box-wrapper">
+            <div class="code-box-wrapper" id="modalResponseWrapper">
                 <div class="code-box-header">
                     <span>Response Received / Output Body</span>
                     <button type="button" onclick="copyModalText('modalResponse')">Copy Response</button>
@@ -1538,18 +1596,20 @@
         const toggle = document.getElementById('masterSyncToggle');
         const label  = document.getElementById('toggleStatusLabel');
         const dispEngine = document.getElementById('dispSyncEngine');
+        const dispWess = document.getElementById('dispWessStatus');
+        const isConnected = dispWess && dispWess.textContent.includes('Verified');
 
-        toggle.checked = isEnabled;
+        toggle.checked = Boolean(isEnabled);
         if (isEnabled) {
             label.textContent = 'Sync Active';
             label.className = 'toggle-status-text';
-            dispEngine.textContent = 'Active';
-            dispEngine.style.color = 'var(--success)';
+            dispEngine.textContent = isConnected ? 'Active' : 'Ready (Pending WESS)';
+            dispEngine.style.color = isConnected ? 'var(--success)' : 'var(--warning)';
         } else {
             label.textContent = 'Sync Paused';
             label.className = 'toggle-status-text paused';
             dispEngine.textContent = 'Paused (Disabled)';
-            dispEngine.style.color = 'var(--warning)';
+            dispEngine.style.color = 'var(--text-muted)';
         }
     }
 
@@ -1667,6 +1727,44 @@
         }
 
         handleCalendarSelectionChange();
+    }
+
+    function reloadCrmCalendars() {
+        const locationId = document.getElementById('locationId').value;
+        const companyId  = document.getElementById('companyId').value;
+        if (!locationId) {
+            notify('warning', 'Location Required', 'Cannot fetch calendars without active CRM location context.');
+            return;
+        }
+
+        const badge = document.getElementById('calendarLoadingBadge');
+        if (badge) badge.textContent = 'Loading...';
+
+        fetch("{{ route('api.custom-page.calendars') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ locationId, companyId })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success && data.calendars) {
+                const currentCalId = document.getElementById('calendar_id').value;
+                const currentUserId = document.getElementById('calendar_user_id').value;
+                populateCalendars(data.calendars, currentCalId, currentUserId);
+                notify('success', 'Calendars Refreshed', `Found ${data.calendars.length} CRM booking calendar(s).`);
+            } else {
+                notify('error', 'Fetch Failed', data.message || 'Could not load calendars from CRM.');
+                if (badge) badge.textContent = 'Retry ↻';
+            }
+        })
+        .catch(err => {
+            notify('error', 'Network Error', 'Failed to communicate with CRM API.');
+            if (badge) badge.textContent = 'Retry ↻';
+        });
     }
 
     function handleCalendarSelectionChange() {
@@ -1822,6 +1920,8 @@
                         populateCalendars(data.calendars, creds.calendar_id, creds.calendar_user_id);
                     } else if (creds.calendar_id) {
                         populateCalendars([{ id: creds.calendar_id, name: creds.calendar_name || `Calendar ${creds.calendar_id}`, user_id: creds.calendar_user_id }], creds.calendar_id, creds.calendar_user_id);
+                    } else {
+                        populateCalendars(data.calendars || [], null, null);
                     }
 
                     const dispWess = document.getElementById('dispWessStatus');
@@ -1830,12 +1930,11 @@
 
                     updateBadge(creds.is_connected);
                 } else {
-                    if (data.calendars && data.calendars.length > 0) {
-                        populateCalendars(data.calendars);
-                    }
+                    populateCalendars(data.calendars || [], null, null);
                     updateBadge(false);
                 }
             } else {
+                populateCalendars([], null, null);
                 updateBadge(false);
             }
         })
@@ -1847,6 +1946,7 @@
 
     function handleMasterToggleChange(isEnabled) {
         const locationId = document.getElementById('locationId').value;
+        const companyId  = document.getElementById('companyId').value;
         if (!locationId) {
             notify('warning', 'Account Undetected', 'Open this page inside your CRM account to toggle sync.');
             updateMasterToggleUI(!isEnabled);
@@ -1862,6 +1962,7 @@
             },
             body: JSON.stringify({
                 locationId: locationId,
+                companyId: companyId,
                 is_sync_enabled: isEnabled
             })
         })
@@ -2089,7 +2190,42 @@
             responseBox.textContent = String(item.response_body || '{}');
         }
 
+        switchModalView('both');
         document.getElementById('logDetailBackdrop').classList.add('show');
+    }
+
+    function switchModalView(view) {
+        const payloadWrapper  = document.getElementById('modalPayloadWrapper');
+        const responseWrapper = document.getElementById('modalResponseWrapper');
+        const payloadBox      = document.getElementById('modalPayload');
+        const responseBox     = document.getElementById('modalResponse');
+        const btnBoth         = document.getElementById('modalTabBoth');
+        const btnPayload      = document.getElementById('modalTabPayload');
+        const btnResponse     = document.getElementById('modalTabResponse');
+
+        if (!payloadWrapper || !responseWrapper) return;
+
+        btnBoth.className     = 'btn btn-sm btn-secondary';
+        btnPayload.className  = 'btn btn-sm btn-secondary';
+        btnResponse.className = 'btn btn-sm btn-secondary';
+
+        if (view === 'payload') {
+            btnPayload.className          = 'btn btn-sm btn-primary';
+            payloadWrapper.style.display  = 'flex';
+            responseWrapper.style.display = 'none';
+            payloadBox.style.maxHeight    = '450px';
+        } else if (view === 'response') {
+            btnResponse.className         = 'btn btn-sm btn-primary';
+            payloadWrapper.style.display  = 'none';
+            responseWrapper.style.display = 'flex';
+            responseBox.style.maxHeight   = '450px';
+        } else {
+            btnBoth.className             = 'btn btn-sm btn-primary';
+            payloadWrapper.style.display  = 'flex';
+            responseWrapper.style.display = 'flex';
+            payloadBox.style.maxHeight    = '240px';
+            responseBox.style.maxHeight   = '240px';
+        }
     }
 
     function closeLogModal() {

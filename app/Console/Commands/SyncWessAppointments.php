@@ -10,7 +10,7 @@ class SyncWessAppointments extends Command
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'wess:sync {--location= : Optional specific location ID}';
+    protected $signature = 'wess:sync {--location= : Optional specific location ID} {--limit= : Limit appointments to sync for testing} {--test : Enable test mode with sample appointments}';
 
     /**
      * The console command description.
@@ -23,15 +23,23 @@ class SyncWessAppointments extends Command
     public function handle(WessSyncService $syncService): int
     {
         $locationId = $this->option('location');
+        $limit      = $this->option('limit') ? (int)$this->option('limit') : null;
+        $isTest     = (bool)$this->option('test');
 
-        $this->info("Starting WESS <-> GoHighLevel synchronization" . ($locationId ? " for location: {$locationId}" : "") . "...");
+        $this->info("Starting WESS <-> GoHighLevel synchronization" 
+            . ($locationId ? " for location: {$locationId}" : "") 
+            . ($limit ? " [LIMIT: {$limit}]" : "") 
+            . ($isTest ? " [TEST MODE]" : "") 
+            . "...");
 
-        $results = $syncService->syncAllLocations($locationId);
+        $results = $syncService->syncAllLocations($locationId, $limit, $isTest);
 
         foreach ($results as $loc => $res) {
             $status = $res['status'] ?? 'unknown';
             if ($status === 'success') {
-                $this->info("✓ Location [{$loc}]: Synced {$res['synced_count']} appointments.");
+                $count = $res['synced_count'] ?? 0;
+                $limitNote = $limit ? " (Test Limit: {$limit})" : "";
+                $this->info("✓ Location [{$loc}]: Synced {$count} appointment(s){$limitNote}.");
             } elseif ($status === 'skipped') {
                 $this->warn("⚠ Location [{$loc}]: {$res['message']}");
             } else {

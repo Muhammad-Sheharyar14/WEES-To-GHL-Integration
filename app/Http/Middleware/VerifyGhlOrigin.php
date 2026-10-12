@@ -18,10 +18,10 @@ class VerifyGhlOrigin
         // Allow GoHighLevel iframe embedding by removing restrictive X-Frame-Options
         // and setting permissive frame-ancestors CSP for GoHighLevel domains
         $response->headers->remove('X-Frame-Options');
-        $response->headers->set(
-            'Content-Security-Policy',
-            "frame-ancestors 'self' https://*.gohighlevel.com https://*.leadconnectorhq.com https://*.msgsndr.com https://*.highlevel.com http://localhost:*;"
-        );
+        // $response->headers->set(
+        //     'Content-Security-Policy',
+        //     "frame-ancestors 'self' https://*.gohighlevel.com https://*.leadconnectorhq.com https://*.msgsndr.com https://*.highlevel.com http://localhost:*;"
+        // );
 
         return $response;
     }

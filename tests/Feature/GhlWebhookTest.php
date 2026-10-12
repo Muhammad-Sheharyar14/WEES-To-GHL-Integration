@@ -162,4 +162,54 @@ class GhlWebhookTest extends TestCase
             'event_type'  => 'ContactDelete',
         ]);
     }
+
+    public function test_loop_prevention_skips_appointment_webhook_with_wess_signature(): void
+    {
+        WessConfig::create([
+            'location_id'     => 'loc_loop_appt',
+            'api_token'       => 'test_token',
+            'is_sync_enabled' => true,
+        ]);
+
+        $response = $this->postJson('/api/webhook', [
+            'type'        => 'AppointmentCreate',
+            'locationId'  => 'loc_loop_appt',
+            'appointment' => [
+                'id'        => 'appt_from_wess_123',
+                'contactId' => 'contact_abc',
+                'title'     => 'Facial Treatment (Booked Slot)',
+                'notes'     => 'WESS Booking ID: 98765',
+            ],
+        ]);
+
+        $response->assertStatus(200);
+
+        $log = WebhookLog::where('location_id', 'loc_loop_appt')->latest()->first();
+        $this->assertNotNull($log);
+        $this->assertStringContainsString('Loop prevention', $log->response_body);
+    }
+
+    public function test_loop_prevention_skips_contact_webhook_when_cache_lock_present(): void
+    {
+        WessConfig::create([
+            'location_id'     => 'loc_loop_contact',
+            'api_token'       => 'test_token',
+            'is_sync_enabled' => true,
+        ]);
+
+        \Illuminate\Support\Facades\Cache::put('wess_origin_contact_contact_loop_xyz', true, 300);
+
+        $response = $this->postJson('/api/webhook', [
+            'type'       => 'ContactUpdate',
+            'locationId' => 'loc_loop_contact',
+            'id'         => 'contact_loop_xyz',
+            'phone'      => '+60123456789',
+        ]);
+
+        $response->assertStatus(200);
+
+        $log = WebhookLog::where('location_id', 'loc_loop_contact')->latest()->first();
+        $this->assertNotNull($log);
+        $this->assertStringContainsString('Loop prevention', $log->response_body);
+    }
 }

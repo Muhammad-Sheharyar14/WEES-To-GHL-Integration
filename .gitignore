@@ -22,7 +22,8 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
-help/
+help/*.sql
+help/*.txt
 .agents/
 credentials.txt
 test_wess_api.php

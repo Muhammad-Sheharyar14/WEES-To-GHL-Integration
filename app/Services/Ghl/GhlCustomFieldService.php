@@ -204,6 +204,9 @@ class GhlCustomFieldService
             if (!$success) {
                 Log::warning("Could not update custom fields for GHL contact {$contactId}: HTTP {$res->status()} - {$res->body()}");
             } else {
+                // Loop Prevention: Tag contact in cache for 45 seconds so immediate GHL ContactUpdate webhooks are ignored
+                Cache::put("wess_origin_contact_{$contactId}", true, now()->addSeconds(45));
+
                 Log::info("Successfully updated GHL contact {$contactId} with custom fields", [
                     'wess_code'  => $wessCode,
                     'last_visit' => $lastVisit,

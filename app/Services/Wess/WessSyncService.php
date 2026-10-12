@@ -21,7 +21,7 @@ class WessSyncService
      * Run synchronization for all active locations or a specific location
      * Respects Master Sync Switch (Excel Item A.3)
      */
-    public function syncAllLocations(?string $specificLocationId = null): array
+    public function syncAllLocations(?string $specificLocationId = null, ?int $limit = null, bool $isTest = false): array
     {
         $query = WessConfig::query();
 
@@ -50,7 +50,7 @@ class WessSyncService
                 continue;
             }
 
-            $results[$config->location_id] = $this->syncLocation($config);
+            $results[$config->location_id] = $this->syncLocation($config, $limit, $isTest);
         }
 
         return $results;
@@ -59,7 +59,7 @@ class WessSyncService
     /**
      * Synchronize a single location between WESS and GoHighLevel
      */
-    public function syncLocation(WessConfig $config): array
+    public function syncLocation(WessConfig $config, ?int $limit = null, bool $isTest = false): array
     {
         $locationId = $config->location_id;
         $branchId   = $config->branch_id ?: 1;
@@ -69,10 +69,24 @@ class WessSyncService
         $errors      = [];
 
         try {
-            // 1. Fetch upcoming appointments from WESS (Excel Item A.1)
-            $appointments = $wessClient->getAppointments($branchId);
+            // 1. Fetch upcoming appointments for the next 30 days from WESS (per official WESS API Doc section 3.12)
+            $params = [
+                'filter' => [
+                    'date_from' => now()->startOfDay()->format('Y-m-d H:i:s'),
+                    'date_to'   => now()->addDays(30)->endOfDay()->format('Y-m-d H:i:s'),
+                ],
+                'per_page' => $limit ? min($limit, 100) : 100,
+                'sort'     => 'date',
+            ];
+            $appointments = $wessClient->getAppointments($branchId, $params);
+
+            // Cap appointments if limit is set (e.g. ?test=1 or ?test=5 to test first 1 or 5 real records)
+            if ($limit !== null && $limit > 0 && !empty($appointments)) {
+                $appointments = array_slice($appointments, 0, $limit);
+            }
 
             // 2. Sync appointments to GHL calendar (Excel Item A.1 & A.4)
+            // If appointments is empty (0 appointments in WESS), loop does not run and GHL is NOT called!
             foreach ($appointments as $appt) {
                 try {
                     $this->ghlCalendarService->syncAppointmentToGhl(
@@ -84,17 +98,17 @@ class WessSyncService
                     );
                     $syncedCount++;
                 } catch (Exception $e) {
-                    $errors[] = "Appt #{$appt['id']}: " . $e->getMessage();
+                    $errors[] = "Appt #" . ($appt['id'] ?? 'unknown') . ": " . $e->getMessage();
                 }
             }
 
             WebhookLog::create([
                 'source'          => 'wess_sync',
                 'location_id'     => $locationId,
-                'event_type'      => 'PeriodicWessSyncCompleted',
+                'event_type'      => $limit ? 'TestWessSyncCompleted' : 'PeriodicWessSyncCompleted',
                 'endpoint'        => "{$config->base_url}/branches/{$branchId}/appointments",
                 'method'          => 'GET',
-                'payload'         => ['branch_id' => $branchId, 'total_fetched' => count($appointments)],
+                'payload'         => array_merge(['branch_id' => $branchId, 'total_fetched' => count($appointments)], $params),
                 'response_status' => 200,
                 'response_body'   => json_encode(['synced_count' => $syncedCount, 'errors' => $errors]),
             ]);
