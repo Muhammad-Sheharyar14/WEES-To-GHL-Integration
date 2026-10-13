@@ -561,19 +561,149 @@
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
         }
 
-        .btn-toggle-pwd {
+        .input-actions {
             position: absolute;
-            right: 8px;
+            right: 6px;
             top: 50%;
             transform: translateY(-50%);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .btn-input-action {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             background: #f1f5f9;
             border: 1px solid var(--border-color);
             border-radius: var(--radius-sm);
-            padding: 4px 9px;
+            padding: 4px 8px;
             font-size: 12px;
             font-weight: 600;
             color: var(--text-muted);
             cursor: pointer;
+            transition: all 0.15s ease;
+            height: 28px;
+            min-width: 28px;
+        }
+
+        .btn-input-action:hover {
+            background: #e2e8f0;
+            color: var(--text-main);
+        }
+
+        .btn-input-action-primary {
+            background: var(--primary-light, #eff6ff);
+            border-color: #bfdbfe;
+            color: var(--primary, #2563eb);
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .btn-input-action-primary:hover {
+            background: var(--primary, #2563eb);
+            border-color: var(--primary, #2563eb);
+            color: #ffffff;
+        }
+
+        .btn-input-action:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .spinner-sm {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(37, 99, 235, 0.25);
+            border-top-color: var(--primary, #2563eb);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .form-control.input-locked {
+            background-color: #f8fafc;
+            border-color: #86efac;
+            color: #475569;
+            cursor: default;
+        }
+
+        .token-verified-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            margin-top: 8px;
+            gap: 10px;
+        }
+
+        .token-verified-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .token-verified-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #dcfce7;
+            color: #15803d;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        .token-masked-preview {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: #1e293b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .token-verified-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .btn-token-link {
+            background: #ffffff;
+            border: 1px solid #d1d5db;
+            border-radius: var(--radius-sm);
+            padding: 3px 8px;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-token-link:hover {
+            background: #f3f4f6;
+            color: var(--text-main);
+        }
+
+        .btn-token-link-danger {
+            color: var(--danger);
+            border-color: #fecaca;
+            background: #ffffff;
+        }
+
+        .btn-token-link-danger:hover {
+            background: var(--danger-bg);
+            border-color: var(--danger);
         }
 
         .form-hint {
@@ -1330,11 +1460,29 @@
                     <div class="form-group">
                         <label class="form-label" for="api_token">
                             <span>WESS Bearer Auth Token</span>
-                            <span class="label-badge">Required</span>
+                            <span class="label-badge" id="tokenBadge">Required</span>
                         </label>
                         <div class="input-group">
-                            <input type="password" class="form-control" id="api_token" name="api_token" placeholder="Paste your WESS Bearer Auth Token" required autocomplete="off">
-                            <button type="button" class="btn-toggle-pwd" id="toggleSecretBtn" onclick="toggleSecretVisibility()">Show</button>
+                            <input type="password" class="form-control" id="api_token" name="api_token" placeholder="Paste your WESS Bearer Auth Token" required autocomplete="off" style="padding-right: 90px;">
+                            <div class="input-actions" id="tokenInputActions">
+                                <button type="button" class="btn-input-action" id="toggleSecretBtn" onclick="toggleSecretVisibility()" title="Show/Hide Token">Show</button>
+                                <button type="button" class="btn-input-action btn-input-action-primary" id="verifyTokenBtn" onclick="verifyAndFetchBranches(true)" title="Verify token & load branches">
+                                    <span id="verifyTokenIcon">✓</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="token-verified-card" id="tokenVerifiedCard" style="display: none;">
+                            <div class="token-verified-left">
+                                <span class="token-verified-badge">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                    Verified & Locked
+                                </span>
+                                <span class="token-masked-preview" id="tokenMaskedPreview"></span>
+                            </div>
+                            <div class="token-verified-actions">
+                                <button type="button" class="btn-token-link" id="toggleMaskedTokenBtn" onclick="toggleMaskedToken()">Show</button>
+                                <button type="button" class="btn-token-link btn-token-link-danger" onclick="unlockTokenField()" title="Edit or replace token">✕ Change</button>
+                            </div>
                         </div>
                     </div>
 
@@ -1604,6 +1752,10 @@
     /* ========================================================
        Credentials & UI Helpers
     ======================================================== */
+    let isFetchingBranches = false;
+    let isBranchesLoaded = false;
+    let isMaskedTokenRevealed = false;
+
     function toggleSecretVisibility() {
         const input = document.getElementById('api_token');
         const btn   = document.getElementById('toggleSecretBtn');
@@ -1614,6 +1766,159 @@
             input.type = 'password';
             btn.textContent = 'Show';
         }
+    }
+
+    function lockTokenField(token) {
+        const input = document.getElementById('api_token');
+        const actions = document.getElementById('tokenInputActions');
+        const card = document.getElementById('tokenVerifiedCard');
+        const tokenBadge = document.getElementById('tokenBadge');
+
+        input.value = token;
+        input.readOnly = true;
+        input.classList.add('input-locked');
+
+        if (actions) actions.style.display = 'none';
+
+        if (card) {
+            card.style.display = 'flex';
+            renderMaskedTokenPreview(token);
+        }
+
+        if (tokenBadge) {
+            tokenBadge.textContent = 'Verified';
+            tokenBadge.style.color = 'var(--success)';
+            tokenBadge.style.background = 'var(--success-bg)';
+        }
+    }
+
+    function unlockTokenField() {
+        const input = document.getElementById('api_token');
+        const actions = document.getElementById('tokenInputActions');
+        const card = document.getElementById('tokenVerifiedCard');
+        const tokenBadge = document.getElementById('tokenBadge');
+
+        input.readOnly = false;
+        input.classList.remove('input-locked');
+
+        if (actions) actions.style.display = 'flex';
+        if (card) card.style.display = 'none';
+
+        if (tokenBadge) {
+            tokenBadge.textContent = 'Editing';
+            tokenBadge.style.color = 'var(--warning, #d97706)';
+            tokenBadge.style.background = 'var(--warning-bg, #fef3c7)';
+        }
+
+        isBranchesLoaded = false;
+        input.focus();
+        input.select();
+    }
+
+    function toggleMaskedToken() {
+        isMaskedTokenRevealed = !isMaskedTokenRevealed;
+        const token = document.getElementById('api_token').value;
+        renderMaskedTokenPreview(token);
+    }
+
+    function renderMaskedTokenPreview(token) {
+        const preview = document.getElementById('tokenMaskedPreview');
+        const btn = document.getElementById('toggleMaskedTokenBtn');
+        if (!preview) return;
+
+        if (isMaskedTokenRevealed) {
+            preview.textContent = token;
+            if (btn) btn.textContent = 'Hide';
+        } else {
+            if (token && token.length > 12) {
+                preview.textContent = token.substring(0, 6) + '••••••••••••' + token.substring(token.length - 4);
+            } else {
+                preview.textContent = '••••••••••••';
+            }
+            if (btn) btn.textContent = 'Show';
+        }
+    }
+
+    function verifyAndFetchBranches(isManualClick = true) {
+        const token = document.getElementById('api_token').value.trim();
+        const baseUrl = document.getElementById('base_url').value.trim();
+        const branchBadge = document.getElementById('branchLoadingBadge');
+        const verifyBtn = document.getElementById('verifyTokenBtn');
+        const verifyIcon = document.getElementById('verifyTokenIcon');
+
+        if (!token) {
+            if (isManualClick) {
+                notify('warning', 'Token Required', 'Please enter your WESS Bearer Auth Token first.');
+                document.getElementById('api_token').focus();
+            }
+            return;
+        }
+
+        if (isFetchingBranches) return;
+        isFetchingBranches = true;
+
+        if (verifyBtn) verifyBtn.disabled = true;
+        if (verifyIcon) verifyIcon.innerHTML = '<span class="spinner-sm"></span>';
+        if (branchBadge) {
+            branchBadge.textContent = 'Loading Branches...';
+            branchBadge.style.color = 'var(--primary)';
+            branchBadge.style.background = 'var(--primary-light)';
+        }
+
+        fetch("{{ route('api.custom-page.test') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ base_url: baseUrl, api_token: token })
+        })
+        .then(res => res.json())
+        .then(data => {
+            isFetchingBranches = false;
+            if (verifyBtn) verifyBtn.disabled = false;
+            if (verifyIcon) verifyIcon.textContent = '✓';
+
+            if (data.success) {
+                isBranchesLoaded = true;
+                lockTokenField(token);
+                updateBadge(true);
+
+                if (data.branches && data.branches.length > 0) {
+                    if (isManualClick) {
+                        notify('success', 'Token Verified!', `Connected to WESS (${data.branches.length} branch${data.branches.length > 1 ? 'es' : ''} loaded)`);
+                    }
+                } else {
+                    if (isManualClick) {
+                        notify('warning', 'Token Verified (0 Branches)', 'Authenticated successfully, but no branches are enabled for online booking in WESS.');
+                    }
+                }
+
+                populateBranches(data.branches || []);
+            } else {
+                isBranchesLoaded = false;
+                if (data.is_rate_limited) {
+                    notify('warning', 'Rate Limit Reached', data.message || 'WESS API rate limit (60 requests/minute) reached. Please wait a moment and try again.');
+                } else if (isManualClick) {
+                    notify('error', 'Token Verification Failed', data.message || 'Invalid WESS token.');
+                }
+                if (branchBadge) {
+                    branchBadge.textContent = data.is_rate_limited ? 'Rate Limited' : 'Failed';
+                    branchBadge.style.color = data.is_rate_limited ? 'var(--warning, #d97706)' : 'var(--danger)';
+                    branchBadge.style.background = data.is_rate_limited ? 'var(--warning-bg, #fef3c7)' : 'var(--danger-bg)';
+                }
+            }
+        })
+        .catch(err => {
+            isFetchingBranches = false;
+            if (verifyBtn) verifyBtn.disabled = false;
+            if (verifyIcon) verifyIcon.textContent = '✓';
+            if (isManualClick) {
+                notify('error', 'Connection Error', 'Failed to reach API endpoint.');
+            }
+            if (branchBadge) branchBadge.textContent = 'Error';
+        });
     }
 
     function updateBadge(isVerified, customText = null) {
@@ -1940,7 +2245,12 @@
 
                 if (data.credentials) {
                     const creds = data.credentials;
-                    if (creds.api_token) document.getElementById('api_token').value = creds.api_token;
+                    if (creds.api_token) {
+                        document.getElementById('api_token').value = creds.api_token;
+                        if (creds.is_connected) {
+                            lockTokenField(creds.api_token);
+                        }
+                    }
                     if (creds.base_url) {
                         const sel = document.getElementById('base_url');
                         const normalized = creds.base_url.replace(/\/+$/, '');
@@ -1962,8 +2272,10 @@
                     }
 
                     if (data.branches && data.branches.length > 0) {
+                        isBranchesLoaded = true;
                         populateBranches(data.branches, creds.branch_id);
                     } else if (creds.api_token) {
+                        isBranchesLoaded = true;
                         populateBranches([], creds.branch_id);
                     }
 
@@ -2350,6 +2662,8 @@
             btnText.textContent = 'Test Connection';
 
             if (data.success) {
+                isBranchesLoaded = true;
+                lockTokenField(token);
                 if (data.branches && data.branches.length > 0) {
                     notify('success', 'Connection Verified!', data.message);
                 } else {
@@ -2358,7 +2672,11 @@
                 updateBadge(true);
                 populateBranches(data.branches || []);
             } else {
-                notify('error', 'Connection Failed', data.message);
+                if (data.is_rate_limited) {
+                    notify('warning', 'Rate Limit Reached', data.message || 'WESS API rate limit (60 requests/minute) reached. Please wait a moment and try again.');
+                } else {
+                    notify('error', 'Connection Failed', data.message);
+                }
                 updateBadge(false);
             }
         })
@@ -2426,14 +2744,20 @@
             btnText.textContent = 'Save & Connect';
 
             if (data.success) {
+                isBranchesLoaded = true;
+                lockTokenField(token);
                 notify('success', 'Configuration Saved', data.message);
                 updateBadge(true);
                 document.getElementById('dispWessStatus').textContent = 'Verified & Connected';
                 document.getElementById('dispWessStatus').style.color = 'var(--success)';
-                if (data.branches) populateBranches(data.branches, branchId);
+                populateBranches(data.branches || [], branchId);
                 if (data.calendars) populateCalendars(data.calendars, calendarId, calendarUserId);
             } else {
-                notify('error', 'Save Failed', data.message);
+                if (data.is_rate_limited) {
+                    notify('warning', 'Rate Limit Reached', data.message || 'WESS API rate limit (60 requests/minute) reached. Please wait a moment and try again.');
+                } else {
+                    notify('error', 'Save Failed', data.message);
+                }
                 updateBadge(false);
             }
         })
@@ -2445,9 +2769,31 @@
     });
 
     // Event Listeners for select element changes
-    document.getElementById('branch_id').addEventListener('change', function() {
+    const branchSelectEl = document.getElementById('branch_id');
+
+    function handleBranchDropdownTrigger() {
+        const token = document.getElementById('api_token').value.trim();
+        if (token && !isBranchesLoaded && !isFetchingBranches) {
+            verifyAndFetchBranches(false);
+        }
+    }
+
+    branchSelectEl.addEventListener('focus', handleBranchDropdownTrigger);
+    branchSelectEl.addEventListener('mousedown', handleBranchDropdownTrigger);
+
+    branchSelectEl.addEventListener('change', function() {
         const selectedOption = this.options[this.selectedIndex];
         document.getElementById('dispBranchName').textContent = (selectedOption && selectedOption.value) ? selectedOption.textContent : '-';
+    });
+
+    document.getElementById('api_token').addEventListener('input', function() {
+        isBranchesLoaded = false;
+        const badge = document.getElementById('tokenBadge');
+        if (badge) {
+            badge.textContent = 'Unverified';
+            badge.style.color = 'var(--warning, #d97706)';
+            badge.style.background = 'var(--warning-bg, #fef3c7)';
+        }
     });
 
     document.getElementById('calendar_id').addEventListener('change', handleCalendarSelectionChange);

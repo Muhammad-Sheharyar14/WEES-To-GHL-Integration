@@ -5,6 +5,7 @@ namespace App\Services\Wess;
 use App\Models\WessConfig;
 use App\Models\WebhookLog;
 use App\Services\Ghl\GhlCalendarService;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Exception;
 
@@ -78,7 +79,7 @@ class WessSyncService
                 'per_page' => $limit ? min($limit, 100) : 100,
                 'sort'     => 'date',
             ];
-            $appointments = $wessClient->getAppointments($branchId, $params);
+            $appointments = $wessClient->getAppointments($branchId, $params, true, $limit);
 
             // Cap appointments if limit is set (e.g. ?test=1 or ?test=5 to test first 1 or 5 real records)
             if ($limit !== null && $limit > 0 && !empty($appointments)) {
@@ -89,6 +90,15 @@ class WessSyncService
             // If appointments is empty (0 appointments in WESS), loop does not run and GHL is NOT called!
             foreach ($appointments as $appt) {
                 try {
+                    $apptId = $appt['id'] ?? null;
+                    $apptHash = md5(($appt['date'] ?? '') . ($appt['status'] ?? '') . ($appt['processing_time'] ?? ''));
+                    $cacheKey = "wess_synced_{$locationId}_{$apptId}_{$apptHash}";
+
+                    // Skip unchanged appointments to conserve API quota and avoid redundant syncs
+                    if (!$isTest && $apptId && Cache::has($cacheKey)) {
+                        continue;
+                    }
+
                     $this->ghlCalendarService->syncAppointmentToGhl(
                         $locationId, 
                         $appt, 
@@ -97,6 +107,13 @@ class WessSyncService
                         $config->calendar_user_id ?: null
                     );
                     $syncedCount++;
+
+                    if ($apptId) {
+                        Cache::put($cacheKey, true, now()->addDays(7));
+                    }
+
+                    // Pace calls to GHL to respect GHL 10 req/s burst limit
+                    usleep(120000); // 120ms
                 } catch (Exception $e) {
                     $errors[] = "Appt #" . ($appt['id'] ?? 'unknown') . ": " . $e->getMessage();
                 }

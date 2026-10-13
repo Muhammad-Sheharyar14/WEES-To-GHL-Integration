@@ -244,4 +244,25 @@ class CustomPageTest extends TestCase
                 ]
             ]);
     }
+
+    public function test_wess_rate_limit_handled_gracefully(): void
+    {
+        \Illuminate\Support\Facades\Http::fake([
+            'https://api.wessconnect.com/api/v1/user' => \Illuminate\Support\Facades\Http::response([
+                'message' => 'Too Many Attempts.'
+            ], 429, ['Retry-After' => '30']),
+        ]);
+
+        $response = $this->postJson('/api/custom-page/test', [
+            'api_token' => 'mock_rate_limited_token',
+            'base_url'  => 'https://api.wessconnect.com/api/v1/online',
+        ]);
+
+        $response->assertStatus(429)
+            ->assertJson([
+                'success'         => false,
+                'is_rate_limited' => true,
+                'retry_after'     => 30,
+            ]);
+    }
 }

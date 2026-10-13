@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\WessRateLimitException;
 use App\Models\GhlToken;
 use App\Models\WessConfig;
 use App\Models\WebhookLog;
@@ -140,6 +141,13 @@ class CustomPageController extends Controller
                 'permissions' => $authData['permissions'],
                 'branches'    => $branches,
             ]);
+        } catch (WessRateLimitException $e) {
+            return response()->json([
+                'success'         => false,
+                'is_rate_limited' => true,
+                'retry_after'     => $e->getRetryAfter(),
+                'message'         => $e->getMessage(),
+            ], 429);
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
@@ -241,6 +249,14 @@ class CustomPageController extends Controller
                 'branches'     => $branches,
                 'calendars'    => $calendars,
             ]);
+        } catch (WessRateLimitException $e) {
+            return response()->json([
+                'success'         => false,
+                'is_verified'     => false,
+                'is_rate_limited' => true,
+                'retry_after'     => $e->getRetryAfter(),
+                'message'         => $e->getMessage(),
+            ], 429);
         } catch (Exception $e) {
             return response()->json([
                 'success'     => false,

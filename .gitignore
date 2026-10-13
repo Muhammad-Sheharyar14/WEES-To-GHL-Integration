@@ -22,9 +22,9 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
-help/*.sql
-help/*.txt
+help/
 .agents/
+.agent/
 credentials.txt
 test_wess_api.php
 *.xlsx
