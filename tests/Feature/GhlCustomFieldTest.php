@@ -147,4 +147,35 @@ class GhlCustomFieldTest extends TestCase
             return false;
         });
     }
+
+    public function test_get_or_create_contact_attaches_wess_tag(): void
+    {
+        $locationId = 'loc_test_wess_tag';
+        GhlToken::create([
+            'location_id'   => $locationId,
+            'access_token'  => 'fake_ghl_token',
+            'refresh_token' => 'fake_refresh_token',
+            'user_type'     => 'Location',
+            'expires_at'    => now()->addDay(),
+        ]);
+
+        Http::fake([
+            'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
+                'contact' => ['id' => 'cnt_wess_tag_123']
+            ], 200),
+        ]);
+
+        $calendarService = app(\App\Services\Ghl\GhlCalendarService::class);
+        $contactId = $calendarService->getOrCreateContact($locationId, 'John Doe', '+6591234567', 'john@example.com');
+
+        $this->assertEquals('cnt_wess_tag_123', $contactId);
+
+        Http::assertSent(function ($request) {
+            if ($request->url() === 'https://services.leadconnectorhq.com/contacts/upsert' && $request->method() === 'POST') {
+                $data = $request->data();
+                return isset($data['tags']) && in_array('WESS', $data['tags']);
+            }
+            return false;
+        });
+    }
 }

@@ -328,6 +328,7 @@ class GhlCalendarService
             'firstName'  => $parts[0] ?: 'WESS',
             'lastName'   => $parts[1] ?? 'Client',
             'name'       => $name ?: 'WESS Client',
+            'tags'       => ['WESS'],
         ];
         if (!empty($phone)) {
             $payload['phone'] = $phone;
@@ -350,6 +351,22 @@ class GhlCalendarService
         }
 
         return null;
+    }
+
+    /**
+     * Add tags to a GHL Contact (Excel / CRM organization)
+     */
+    public function addContactTags(string $locationId, string $contactId, array $tags = ['WESS']): bool
+    {
+        try {
+            $res = $this->ghlRequest('POST', "contacts/{$contactId}/tags", $locationId, [
+                'tags' => $tags,
+            ]);
+            return in_array($res->status(), [200, 201]);
+        } catch (Exception $e) {
+            Log::warning("Failed to add tags to GHL contact {$contactId}: " . $e->getMessage());
+            return false;
+        }
     }
 
     /**
