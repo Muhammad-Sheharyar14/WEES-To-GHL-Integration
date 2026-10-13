@@ -1296,8 +1296,8 @@
                         </label>
                         <div class="input-group">
                             <select class="form-control" id="base_url" name="base_url" required>
-                                <option value="https://api.wessconnect.net/api/v1/online">Live (https://api.wessconnect.net/api/v1/online)</option>
-                                <option value="https://api.prelive.wessconnect.net/api/v1/online" selected>Sandbox (https://api.prelive.wessconnect.net/api/v1/online)</option>
+                                <option value="https://api.wessconnect.com/api/v1/online" selected>Live (https://api.wessconnect.com/api/v1/online)</option>
+                                <option value="https://api.prelive.wessconnect.net/api/v1/online">Sandbox (https://api.prelive.wessconnect.net/api/v1/online)</option>
                             </select>
                         </div>
                     </div>

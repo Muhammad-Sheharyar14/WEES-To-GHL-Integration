@@ -15,7 +15,7 @@ class WessClient
     public function __construct(?string $token = null, ?string $baseUrl = null, int $timeout = 15)
     {
         $this->token   = $token ?: config('wess.default_token', '');
-        $this->baseUrl = rtrim($baseUrl ?: config('wess.default_base_url', 'https://api.prelive.wessconnect.net/api/v1/online'), '/');
+        $this->baseUrl = $this->normalizeBaseUrl($baseUrl ?: config('wess.default_base_url', 'https://api.wessconnect.com/api/v1/online'));
         $this->timeout = $timeout;
     }
 
@@ -33,8 +33,23 @@ class WessClient
      */
     public function setBaseUrl(string $baseUrl): self
     {
-        $this->baseUrl = rtrim($baseUrl, '/');
+        $this->baseUrl = $this->normalizeBaseUrl($baseUrl);
         return $this;
+    }
+
+    /**
+     * Normalize base URL to ensure standard /api/v1/online structure
+     */
+    protected function normalizeBaseUrl(string $url): string
+    {
+        $trimmed = rtrim($url, '/');
+        if (preg_match('#/api$#', $trimmed)) {
+            return $trimmed . '/v1/online';
+        }
+        if (preg_match('#/api/v1$#', $trimmed)) {
+            return $trimmed . '/online';
+        }
+        return $trimmed;
     }
 
     /**
