@@ -1649,11 +1649,13 @@
         }
 
         if (!branches || branches.length === 0) {
+            const fallbackBranchId = selectedBranchId || '1';
             const opt = document.createElement('option');
-            opt.value = '';
-            opt.textContent = '-- No branches returned by live API --';
+            opt.value = fallbackBranchId;
+            opt.textContent = `Default Branch (ID: ${fallbackBranchId})`;
+            opt.selected = true;
             select.appendChild(opt);
-            document.getElementById('dispBranchName').textContent = '-';
+            document.getElementById('dispBranchName').textContent = `Default Branch (ID: ${fallbackBranchId})`;
             return;
         }
 
