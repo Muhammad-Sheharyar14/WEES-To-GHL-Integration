@@ -93,6 +93,8 @@ class GhlWebhookController extends Controller
         }
 
         // 3. Appointment Lifecycle Webhooks (AppointmentCreate, AppointmentUpdate, AppointmentDelete)
+        // [Temporarily paused: One-way WESS -> GHL sync mode active]
+        /*
         if (str_contains($normalizedType, 'appointment')) {
             $this->handleAppointmentWebhook($locationId, $normalizedType, $payload, $log);
             return response()->json([
@@ -100,8 +102,11 @@ class GhlWebhookController extends Controller
                 'message' => 'Appointment webhook processed.',
             ], 200);
         }
+        */
 
         // 4. Contact Lifecycle Webhooks (ContactCreate, ContactUpdate, ContactDelete)
+        // [Temporarily paused: One-way WESS -> GHL sync mode active]
+        /*
         if (str_contains($normalizedType, 'contact')) {
             $this->handleContactWebhook($locationId, $normalizedType, $payload, $log);
             return response()->json([
@@ -109,6 +114,7 @@ class GhlWebhookController extends Controller
                 'message' => 'Contact webhook processed.',
             ], 200);
         }
+        */
 
         // 5. Default Fallback
         return response()->json([
