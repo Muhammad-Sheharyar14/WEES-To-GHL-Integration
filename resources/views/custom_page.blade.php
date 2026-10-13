@@ -592,6 +592,31 @@
             font-size: 11.5px;
         }
 
+        .field-error-hint {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 12px;
+            color: var(--danger);
+            background: var(--danger-bg);
+            border: 1px solid var(--danger-border);
+            border-radius: var(--radius-sm);
+            padding: 9px 12px;
+            margin-top: 8px;
+            line-height: 1.45;
+        }
+
+        .field-error-hint svg {
+            flex-shrink: 0;
+            width: 16px;
+            height: 16px;
+            margin-top: 2px;
+        }
+
+        .field-error-hint strong {
+            font-weight: 600;
+        }
+
         /* Buttons */
         .btn-actions {
             display: flex;
@@ -1323,6 +1348,17 @@
                                 <option value="">-- Connect API to Load Branches --</option>
                             </select>
                         </div>
+                        <div class="field-error-hint" id="branchErrorMessage" style="display: none;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                            <div>
+                                <strong>No online branches returned by WESS API.</strong><br>
+                                Please verify in your WESS dashboard that at least one branch is created and toggled for online booking.
+                            </div>
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -1641,22 +1677,35 @@
 
     function populateBranches(branches, selectedBranchId = null) {
         const select = document.getElementById('branch_id');
+        const errorEl = document.getElementById('branchErrorMessage');
         select.innerHTML = '';
 
         const badge = document.getElementById('branchLoadingBadge');
-        if (badge) {
-            badge.textContent = branches && branches.length > 0 ? `${branches.length} Live Branches` : 'Live API';
-        }
 
         if (!branches || branches.length === 0) {
-            const fallbackBranchId = selectedBranchId || '1';
+            if (badge) {
+                badge.textContent = '0 Branches';
+                badge.style.color = 'var(--danger)';
+                badge.style.background = 'var(--danger-bg)';
+            }
             const opt = document.createElement('option');
-            opt.value = fallbackBranchId;
-            opt.textContent = `Default Branch (ID: ${fallbackBranchId})`;
-            opt.selected = true;
+            opt.value = '';
+            opt.textContent = '-- No branches returned by live API --';
             select.appendChild(opt);
-            document.getElementById('dispBranchName').textContent = `Default Branch (ID: ${fallbackBranchId})`;
+            document.getElementById('dispBranchName').textContent = '-';
+            if (errorEl) {
+                errorEl.style.display = 'flex';
+            }
             return;
+        }
+
+        if (badge) {
+            badge.textContent = `${branches.length} Live Branches`;
+            badge.style.color = '';
+            badge.style.background = '';
+        }
+        if (errorEl) {
+            errorEl.style.display = 'none';
         }
 
         const defaultOpt = document.createElement('option');
@@ -1914,8 +1963,8 @@
 
                     if (data.branches && data.branches.length > 0) {
                         populateBranches(data.branches, creds.branch_id);
-                    } else if (creds.branch_id) {
-                        populateBranches([{ id: creds.branch_id, name: creds.branch_name || `Branch ${creds.branch_id}` }], creds.branch_id);
+                    } else if (creds.api_token) {
+                        populateBranches([], creds.branch_id);
                     }
 
                     if (data.calendars && data.calendars.length > 0) {
@@ -2301,11 +2350,13 @@
             btnText.textContent = 'Test Connection';
 
             if (data.success) {
-                notify('success', 'Connection Verified!', data.message);
-                updateBadge(true);
                 if (data.branches && data.branches.length > 0) {
-                    populateBranches(data.branches);
+                    notify('success', 'Connection Verified!', data.message);
+                } else {
+                    notify('warning', 'Connection Verified (0 Branches)', 'Authenticated successfully, but no branches are enabled for online booking in WESS.');
                 }
+                updateBadge(true);
+                populateBranches(data.branches || []);
             } else {
                 notify('error', 'Connection Failed', data.message);
                 updateBadge(false);
@@ -2338,6 +2389,11 @@
 
         if (!token) {
             notify('warning', 'Token Required', 'Please provide a valid WESS API token.');
+            return;
+        }
+
+        if (!branchId) {
+            notify('warning', 'Branch Required', 'Please select a valid WESS branch. If no branches appear, enable online booking in WESS.');
             return;
         }
 
