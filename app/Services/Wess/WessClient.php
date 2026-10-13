@@ -56,6 +56,7 @@ class WessClient
             'Accept'        => 'application/json',
         ])
         ->timeout($this->timeout)
+        ->withOptions(['version' => 1.1])
         ->withoutVerifying(); // Allow self-signed or prelive certificates
 
         if (!empty($params)) {
