@@ -15,7 +15,7 @@ class SyncWessAppointments extends Command
     /**
      * The console command description.
      */
-    protected $description = 'Synchronize appointments and customer data between WESS and GoHighLevel';
+    protected $description = 'Synchronize appointments and customer data between WESS and CRM';
 
     /**
      * Execute the console command.
@@ -26,7 +26,7 @@ class SyncWessAppointments extends Command
         $limit      = $this->option('limit') ? (int)$this->option('limit') : null;
         $isTest     = (bool)$this->option('test');
 
-        $this->info("Starting WESS <-> GoHighLevel synchronization" 
+        $this->info("Starting WESS <-> CRM synchronization" 
             . ($locationId ? " for location: {$locationId}" : "") 
             . ($limit ? " [LIMIT: {$limit}]" : "") 
             . ($isTest ? " [TEST MODE]" : "") 
@@ -40,6 +40,8 @@ class SyncWessAppointments extends Command
                 $count = $res['synced_count'] ?? 0;
                 $limitNote = $limit ? " (Test Limit: {$limit})" : "";
                 $this->info("✓ Location [{$loc}]: Synced {$count} appointment(s){$limitNote}.");
+            } elseif ($status === 'stopped') {
+                $this->warn("⏸ Location [{$loc}]: {$res['message']}");
             } elseif ($status === 'skipped') {
                 $this->warn("⚠ Location [{$loc}]: {$res['message']}");
             } else {

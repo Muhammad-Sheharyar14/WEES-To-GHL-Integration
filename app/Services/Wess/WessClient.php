@@ -411,7 +411,12 @@ class WessClient
             return [];
         }
 
-        return $response->json('data') ?? [];
+        $json = $response->json();
+        if (isset($json['data']) && is_array($json['data'])) {
+            return $json['data'];
+        }
+
+        return is_array($json) ? $json : [];
     }
 
     /**
@@ -425,8 +430,14 @@ class WessClient
             return [];
         }
 
-        return $response->json('data') ?? [];
+        $json = $response->json();
+        if (isset($json['data']) && is_array($json['data'])) {
+            return $json['data'];
+        }
+
+        return is_array($json) ? $json : [];
     }
+
 
     /**
      * Get available appointment time slots

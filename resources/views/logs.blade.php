@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Integration Event Logs | WESS - GoHighLevel</title>
+    <title>Integration Event Logs | WESS - CRM</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -266,7 +266,7 @@
         <div>
             <h1 class="title">Integration Event Logs</h1>
             <p style="font-size: 0.875rem; color: var(--text-muted); margin-top: 4px;">
-                Inspect incoming GoHighLevel webhooks, WESS synchronization events, and appointment activity.
+                Inspect incoming CRM webhooks, WESS synchronization events, and appointment activity.
             </p>
         </div>
         <div>
@@ -280,7 +280,7 @@
     <div class="toolbar">
         <div class="filters">
             <a href="{{ route('logs.index', array_filter(['email' => $email, 'location_id' => $locationId])) }}" class="filter-btn {{ empty($source) ? 'active' : '' }}">All Logs</a>
-            <a href="{{ route('logs.index', array_filter(['source' => 'ghl_webhook', 'email' => $email, 'location_id' => $locationId])) }}" class="filter-btn {{ $source === 'ghl_webhook' ? 'active' : '' }}">GHL Webhooks</a>
+            <a href="{{ route('logs.index', array_filter(['source' => 'ghl_webhook', 'email' => $email, 'location_id' => $locationId])) }}" class="filter-btn {{ $source === 'ghl_webhook' ? 'active' : '' }}">CRM Webhooks</a>
             <a href="{{ route('logs.index', array_filter(['source' => 'wess_sync', 'email' => $email, 'location_id' => $locationId])) }}" class="filter-btn {{ $source === 'wess_sync' ? 'active' : '' }}">WESS Sync</a>
         </div>
 
@@ -345,7 +345,7 @@
                 @if(!empty($email))
                     No logs found matching email <strong>{{ $email }}</strong>.
                 @else
-                    No logs recorded yet. Once GoHighLevel or WESS events trigger, they will be logged here in real-time.
+                    No logs recorded yet. Once CRM or WESS events trigger, they will be logged here in real-time.
                 @endif
             </div>
         @endif

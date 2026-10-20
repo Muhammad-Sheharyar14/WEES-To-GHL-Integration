@@ -1388,7 +1388,7 @@
             <div class="brand-logo-badge">W</div>
             <div class="header-titles">
                 <h1>WESS Integration</h1>
-                <p>Bidirectional sync for appointments and contacts</p>
+                <p>WESS &rarr; CRM appointments and contacts</p>
             </div>
         </div>
         <div class="header-actions">
@@ -1416,7 +1416,7 @@
         </div>
 
         <div class="tabs-nav-right">
-            <div class="nav-sync-toggle-box" title="Toggle bidirectional synchronization for appointments and contacts">
+            <div class="nav-sync-toggle-box" title="Toggle automatic synchronization from WESS to CRM">
                 <span class="toggle-status-text" id="toggleStatusLabel">Sync Paused</span>
                 <label class="switch-label">
                     <input type="checkbox" id="masterSyncToggle" onchange="handleMasterToggleChange(this.checked)">
@@ -1509,19 +1509,23 @@
                         </div>
                     </div>
 
+                    <!-- [Calendar selection commented out: Appointments are dynamically synced to each Therapist's Personal Calendar per client requirement] -->
+                    <!--
                     <div class="form-group">
                         <label class="form-label" for="calendar_id">
                             <span>CRM Booking Calendar</span>
                             <span class="label-badge" id="calendarLoadingBadge" onclick="reloadCrmCalendars()" style="cursor: pointer;" title="Click to refresh calendars from CRM">Live API ↻</span>
                         </label>
                         <div class="input-group">
-                            <select class="form-control" id="calendar_id" name="calendar_id" required>
+                            <select class="form-control" id="calendar_id_disabled" name="calendar_id_disabled">
                                 <option value="">-- Connect Account to Load Calendars --</option>
                             </select>
                         </div>
-                        <input type="hidden" name="calendar_name" id="calendar_name">
-                        <input type="hidden" name="calendar_user_id" id="calendar_user_id">
                     </div>
+                    -->
+                    <input type="hidden" name="calendar_id" id="calendar_id" value="">
+                    <input type="hidden" name="calendar_name" id="calendar_name" value="">
+                    <input type="hidden" name="calendar_user_id" id="calendar_user_id" value="">
 
                     <div class="btn-actions">
                         <button type="button" id="testBtn" class="btn btn-secondary">
@@ -1559,14 +1563,11 @@
                         <span class="metric-val" id="dispBranchName">-</span>
                     </div>
                     <div class="metric-item">
-                        <span class="metric-key">Selected Calendar</span>
-                        <span class="metric-val" id="dispCalendarName">-</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-key">2-Way Sync Engine</span>
-                        <span class="metric-val" id="dispSyncEngine" style="color: var(--success);">Active</span>
+                        <span class="metric-key">Calendar Routing</span>
+                        <span class="metric-val" style="color: var(--success); font-weight: 600;">Dynamic Staff Calendars</span>
                     </div>
                 </div>
+
             </div>
         </div>
     </div>
@@ -1579,7 +1580,7 @@
             <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
                 <div>
                     <h2 class="card-title">Activity & Webhook Logs</h2>
-                    <p class="card-subtitle">Live records of CRM appointment/contact events and WESS synchronization requests</p>
+                    <p class="card-subtitle">Live records of WESS synchronization requests and CRM activity</p>
                 </div>
                 <button type="button" class="btn btn-secondary btn-sm" id="btnRefreshLogs" onclick="fetchLogs(currentLogsPage)">
                     <span id="refreshLogsIcon">↻</span>
@@ -1606,7 +1607,7 @@
                         <tr>
                             <th style="width: 110px;">Status</th>
                             <th>Event / Action</th>
-                            <th>HTTP Method & Endpoint</th>
+                            <th style="width: 130px;">HTTP Method</th>
                             <th style="width: 170px;">Date & Time</th>
                             <th style="width: 110px; text-align: right;">Details</th>
                         </tr>
@@ -1657,7 +1658,7 @@
                 </div>
                 <div>
                     <div class="meta-field-label">Source</div>
-                    <div class="meta-field-value" id="modalSource">ghl_webhook</div>
+                    <div class="meta-field-value" id="modalSource">—</div>
                 </div>
                 <div>
                     <div class="meta-field-label">Date & Time</div>
@@ -1944,13 +1945,17 @@
         if (isEnabled) {
             label.textContent = 'Sync Active';
             label.className = 'toggle-status-text';
-            dispEngine.textContent = isConnected ? 'Active' : 'Ready (Pending WESS)';
-            dispEngine.style.color = isConnected ? 'var(--success)' : 'var(--warning)';
+            if (dispEngine) {
+                dispEngine.textContent = isConnected ? 'Active' : 'Ready (Pending WESS)';
+                dispEngine.style.color = isConnected ? 'var(--success)' : 'var(--warning)';
+            }
         } else {
             label.textContent = 'Sync Paused';
             label.className = 'toggle-status-text paused';
-            dispEngine.textContent = 'Paused (Disabled)';
-            dispEngine.style.color = 'var(--text-muted)';
+            if (dispEngine) {
+                dispEngine.textContent = 'Paused (Disabled)';
+                dispEngine.style.color = 'var(--text-muted)';
+            }
         }
     }
 
@@ -2038,6 +2043,7 @@
 
     function populateCalendars(calendars, selectedCalendarId = null, selectedUserId = null) {
         const select = document.getElementById('calendar_id');
+        if (!select || select.tagName !== 'SELECT') return;
         select.innerHTML = '';
 
         const badge = document.getElementById('calendarLoadingBadge');
@@ -2050,7 +2056,8 @@
             opt.value = '';
             opt.textContent = '-- No calendars found in CRM account --';
             select.appendChild(opt);
-            document.getElementById('dispCalendarName').textContent = '-';
+            const disp = document.getElementById('dispCalendarName');
+            if (disp) disp.textContent = '-';
             return;
         }
 
@@ -2108,8 +2115,10 @@
         .then(res => res.json())
         .then(data => {
             if (data.success && data.calendars) {
-                const currentCalId = document.getElementById('calendar_id').value;
-                const currentUserId = document.getElementById('calendar_user_id').value;
+                const calInput = document.getElementById('calendar_id');
+                const userInput = document.getElementById('calendar_user_id');
+                const currentCalId = calInput ? calInput.value : '';
+                const currentUserId = userInput ? userInput.value : '';
                 populateCalendars(data.calendars, currentCalId, currentUserId);
                 notify('success', 'Calendars Refreshed', `Found ${data.calendars.length} CRM booking calendar(s).`);
             } else {
@@ -2125,19 +2134,24 @@
 
     function handleCalendarSelectionChange() {
         const select = document.getElementById('calendar_id');
+        if (!select || select.tagName !== 'SELECT') return;
         const selectedOption = select.options[select.selectedIndex];
+        const calNameInput = document.getElementById('calendar_name');
+        const userInput = document.getElementById('calendar_user_id');
+        const disp = document.getElementById('dispCalendarName');
         if (selectedOption && selectedOption.value) {
             const calName = selectedOption.dataset.calendarName || selectedOption.textContent;
             const userId  = selectedOption.dataset.userId || '';
-            document.getElementById('calendar_name').value = calName;
-            document.getElementById('calendar_user_id').value = userId;
-            document.getElementById('dispCalendarName').textContent = calName;
+            if (calNameInput) calNameInput.value = calName;
+            if (userInput) userInput.value = userId;
+            if (disp) disp.textContent = calName;
         } else {
-            document.getElementById('calendar_name').value = '';
-            document.getElementById('calendar_user_id').value = '';
-            document.getElementById('dispCalendarName').textContent = '-';
+            if (calNameInput) calNameInput.value = '';
+            if (userInput) userInput.value = '';
+            if (disp) disp.textContent = '-';
         }
     }
+
 
     /* ========================================================
        User Data Decryption & Resolution
@@ -2420,7 +2434,7 @@
                     <td colspan="5" class="logs-empty-state">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
                         <div class="logs-empty-title">No Activity Logs Yet</div>
-                        <div class="logs-empty-desc">Incoming CRM webhooks (appointments, contacts, uninstalls) and WESS sync operations will appear here in real-time.</div>
+                        <div class="logs-empty-desc">WESS synchronization operations and CRM app events will appear here in real-time.</div>
                     </td>
                 </tr>
             `;
@@ -2446,7 +2460,6 @@
                     </td>
                     <td>
                         <span class="badge-method ${methodClass}">${escapeHtml(item.method)}</span>
-                        <span class="endpoint-code" title="${escapeHtml(item.endpoint)}">${escapeHtml(item.endpoint)}</span>
                     </td>
                     <td>
                         <div style="font-weight: 600; color: #334155; font-size: 12.5px;">${escapeHtml(item.created_at)}</div>
@@ -2523,7 +2536,11 @@
         document.getElementById('modalStatus').textContent = item.response_status ? `${item.response_status}` : '—';
         document.getElementById('modalSource').textContent = item.source === 'ghl_webhook' ? 'CRM Webhook' : (item.source === 'wess_sync' ? 'WESS Sync' : (item.source || '—'));
         document.getElementById('modalDate').textContent   = item.created_at || '—';
-        document.getElementById('modalEndpoint').value     = item.endpoint || '—';
+        let displayEndpoint = item.display_endpoint || item.endpoint || '—';
+        if (displayEndpoint && displayEndpoint !== '—') {
+            displayEndpoint = displayEndpoint.replace(/^https?:\/\/services\.leadconnectorhq\.com/i, '');
+        }
+        document.getElementById('modalEndpoint').value     = displayEndpoint || '—';
 
         // Error message handling
         const errWrapper = document.getElementById('modalErrorWrapper');

@@ -7,6 +7,6 @@ use Illuminate\Support\Facades\Schedule;
 | Console Schedule & Tasks
 |--------------------------------------------------------------------------
 | Periodically polls WESS for branch appointment updates and syncs them
-| to GoHighLevel calendars every 10 minutes.
+| to GoHighLevel calendars every 30 minutes.
 */
-Schedule::command('wess:sync')->everyTenMinutes()->withoutOverlapping();
+Schedule::command('wess:sync')->everyThirtyMinutes()->withoutOverlapping();

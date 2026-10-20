@@ -2,10 +2,10 @@
 
 namespace App\Services\Wess;
 
+use App\Models\SyncedAppointment;
 use App\Models\WessConfig;
 use App\Models\WebhookLog;
 use App\Services\Ghl\GhlCalendarService;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Exception;
 
@@ -66,10 +66,20 @@ class WessSyncService
         $branchId   = $config->branch_id ?: 1;
         $wessClient = new WessClient($config->api_token, $config->base_url);
 
-        $syncedCount = 0;
-        $errors      = [];
+        $syncedCount  = 0;
+        $skippedCount = 0;
+        $errors       = [];
 
         try {
+            // Live check: Ensure sync has not been paused before fetching appointments
+            $freshConfig = WessConfig::where('location_id', $locationId)->first();
+            if (!$freshConfig || !$freshConfig->is_sync_enabled || !$freshConfig->is_connected) {
+                return [
+                    'status'  => 'skipped',
+                    'message' => 'Sync is paused for this location via Master Switch.',
+                ];
+            }
+
             // 1. Fetch upcoming appointments for the next 30 days from WESS (per official WESS API Doc section 3.12)
             $params = [
                 'filter' => [
@@ -86,31 +96,60 @@ class WessSyncService
                 $appointments = array_slice($appointments, 0, $limit);
             }
 
-            // 2. Sync appointments to GHL calendar (Excel Item A.1 & A.4)
-            // If appointments is empty (0 appointments in WESS), loop does not run and GHL is NOT called!
+            $stoppedEarly = false;
+
+            // Pre-fetch therapist calendar map once before the loop to protect CRM API rate limits
+            $therapistMap = !empty($appointments)
+                ? $this->ghlCalendarService->getTherapistCalendarMap($locationId, $config->company_id)
+                : [];
+
+            // 2. Sync appointments to CRM calendar (Excel Item A.1 & A.4)
+            // If appointments is empty (0 appointments in WESS), loop does not run and CRM is NOT called!
             foreach ($appointments as $appt) {
+                // Live check: Re-verify sync switch directly from database before processing EACH appointment
+                // If the user flips the Master Switch to "Sync Paused" on the custom page, terminate loop immediately!
+                $liveConfig = WessConfig::where('location_id', $locationId)->first();
+                if (!$liveConfig || !$liveConfig->is_sync_enabled || !$liveConfig->is_connected) {
+                    $stoppedEarly = true;
+                    Log::info("WESS sync terminated immediately for location {$locationId}: Master sync switch was paused from custom page.");
+                    break;
+                }
+
                 try {
                     $apptId = $appt['id'] ?? null;
-                    $apptHash = md5(($appt['date'] ?? '') . ($appt['status'] ?? '') . ($appt['processing_time'] ?? ''));
-                    $cacheKey = "wess_synced_{$locationId}_{$apptId}_{$apptHash}";
-
-                    // Skip unchanged appointments to conserve API quota and avoid redundant syncs
-                    if (!$isTest && $apptId && Cache::has($cacheKey)) {
+                    if (!$apptId) {
                         continue;
                     }
+
+                    $apptHash = md5(($appt['date'] ?? '') . ($appt['status'] ?? '') . ($appt['processing_time'] ?? '') . ($appt['service_name'] ?? $appt['service'] ?? '') . ($appt['customer_name'] ?? ''));
+
+                    // Check persistent database table for existing sync mapping (never relies on volatile cache)
+                    $existingSync = SyncedAppointment::where('location_id', $locationId)
+                        ->where('wess_appointment_id', (string) $apptId)
+                        ->first();
+
+                    // Skip unchanged appointments to conserve API quota and eliminate duplicates
+                    if (!$isTest && $existingSync && $existingSync->ghl_appointment_id && $existingSync->sync_hash === $apptHash) {
+                        $skippedCount++;
+                        continue;
+                    }
+
+                    // Dynamically resolve therapist personal calendar for this appointment
+                    $resolved = $this->ghlCalendarService->resolveTherapistCalendar(
+                        $therapistMap,
+                        $appt,
+                        $liveConfig->calendar_id ?: null,
+                        $liveConfig->calendar_user_id ?: null
+                    );
 
                     $this->ghlCalendarService->syncAppointmentToGhl(
                         $locationId, 
                         $appt, 
                         true, // Mask private details for public slot view (Excel Item A.4)
-                        $config->calendar_id ?: null,
-                        $config->calendar_user_id ?: null
+                        $resolved['calendar_id'] ?: ($liveConfig->calendar_id ?: null),
+                        $resolved['user_id'] ?: ($liveConfig->calendar_user_id ?: null)
                     );
                     $syncedCount++;
-
-                    if ($apptId) {
-                        Cache::put($cacheKey, true, now()->addDays(7));
-                    }
 
                     // Pace calls to GHL to respect GHL 10 req/s burst limit
                     usleep(120000); // 120ms
@@ -119,21 +158,43 @@ class WessSyncService
                 }
             }
 
+            // Update last_synced_at timestamp on location config
+            WessConfig::where('location_id', $locationId)->update(['last_synced_at' => now()]);
+
+            if ($stoppedEarly) {
+                $summaryMessage = "Sync stopped early: Master sync switch was toggled off via custom page (synced {$syncedCount} appointment(s) before stopping).";
+            } else {
+                $summaryMessage = $syncedCount > 0
+                    ? "Synced {$syncedCount} new/updated appointment(s)."
+                    : ($skippedCount > 0 ? "All {$skippedCount} appointments are already up to date in CRM calendar (verified in database, 0 duplicates)." : "No appointments found.");
+            }
+
+            $responseBodyData = [
+                'synced_count'      => $syncedCount,
+                'skipped_unchanged' => $skippedCount,
+                'stopped_early'     => $stoppedEarly,
+                'message'           => $summaryMessage,
+                'errors'            => $errors,
+            ];
+
             WebhookLog::create([
                 'source'          => 'wess_sync',
                 'location_id'     => $locationId,
-                'event_type'      => $limit ? 'TestWessSyncCompleted' : 'PeriodicWessSyncCompleted',
+                'event_type'      => $stoppedEarly ? 'WessSyncStoppedByUser' : ($limit ? 'TestWessSyncCompleted' : 'PeriodicWessSyncCompleted'),
                 'endpoint'        => "{$config->base_url}/branches/{$branchId}/appointments",
                 'method'          => 'GET',
                 'payload'         => array_merge(['branch_id' => $branchId, 'total_fetched' => count($appointments)], $params),
                 'response_status' => 200,
-                'response_body'   => json_encode(['synced_count' => $syncedCount, 'errors' => $errors]),
+                'response_body'   => json_encode($responseBodyData),
             ]);
 
             return [
-                'status'       => 'success',
-                'synced_count' => $syncedCount,
-                'errors'       => $errors,
+                'status'            => $stoppedEarly ? 'stopped' : 'success',
+                'synced_count'      => $syncedCount,
+                'skipped_unchanged' => $skippedCount,
+                'stopped_early'     => $stoppedEarly,
+                'message'           => $summaryMessage,
+                'errors'            => $errors,
             ];
         } catch (Exception $e) {
             Log::error("Failed WESS sync for location {$locationId}: " . $e->getMessage());

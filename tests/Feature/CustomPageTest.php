@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\GhlToken;
+use App\Models\SyncedAppointment;
 use App\Models\WessConfig;
 use App\Models\WebhookLog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -140,6 +141,13 @@ class CustomPageTest extends TestCase
             'response_status' => 200,
         ]);
 
+        SyncedAppointment::create([
+            'location_id'         => 'loc_to_uninstall',
+            'wess_appointment_id' => 'wess_999',
+            'ghl_appointment_id'  => 'ghl_appt_999',
+            'sync_hash'           => 'hash_123',
+        ]);
+
         $response = $this->postJson('/api/webhook', [
             'type'       => 'AppUninstall',
             'locationId' => 'loc_to_uninstall',
@@ -147,10 +155,11 @@ class CustomPageTest extends TestCase
 
         $response->assertStatus(200);
 
-        // Verify credentials and logs were deleted
+        // Verify credentials, tokens, logs, and synced appointments were deleted
         $this->assertDatabaseMissing('wess_configs', ['location_id' => 'loc_to_uninstall']);
         $this->assertDatabaseMissing('ghl_tokens', ['location_id' => 'loc_to_uninstall']);
         $this->assertDatabaseMissing('webhook_logs', ['location_id' => 'loc_to_uninstall']);
+        $this->assertDatabaseMissing('synced_appointments', ['location_id' => 'loc_to_uninstall']);
     }
 
     public function test_save_credentials_saves_calendar_and_user_id(): void

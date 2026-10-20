@@ -212,4 +212,5 @@ class GhlWebhookTest extends TestCase
         $this->assertNotNull($log);
         $this->assertStringContainsString('Loop prevention', $log->response_body);
     }
+
 }

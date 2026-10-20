@@ -175,7 +175,7 @@ class CustomPageController extends Controller
         if (empty($locationId)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Location ID is required. Please ensure the app is opened inside GoHighLevel.',
+                'message' => 'Location ID is required. Please ensure the app is opened inside your CRM account.',
             ], 422);
         }
 
@@ -370,11 +370,17 @@ class CustomPageController extends Controller
         $paginator = $query->paginate(10, ['*'], 'page', $page);
 
         $items = collect($paginator->items())->map(function ($log) {
+            $displayEndpoint = $log->endpoint;
+            if ($displayEndpoint) {
+                $displayEndpoint = preg_replace('#^https?://services\.leadconnectorhq\.com#i', '', $displayEndpoint);
+            }
+
             return [
                 'id'               => $log->id,
                 'source'           => $log->source,
                 'event_type'       => $log->event_type ?: 'webhook_event',
                 'endpoint'         => $log->endpoint ?: '—',
+                'display_endpoint' => $displayEndpoint ?: '—',
                 'method'           => strtoupper((string) ($log->method ?: 'POST')),
                 'response_status'  => $log->response_status,
                 'is_success'       => in_array($log->response_status, [200, 201]) && empty($log->error_message),
