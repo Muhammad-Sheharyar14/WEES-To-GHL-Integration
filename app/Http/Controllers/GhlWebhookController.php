@@ -125,101 +125,105 @@ class GhlWebhookController extends Controller
      */
     protected function handleAppointmentWebhook(?string $locationId, string $type, array $payload, WebhookLog $log): void
     {
-        if (empty($locationId)) {
-            $log->update(['error_message' => 'Missing location_id in appointment webhook payload']);
-            return;
-        }
-
-        $config = WessConfig::where('location_id', $locationId)->first();
-        if (!$config || empty($config->api_token)) {
-            $log->update([
-                'error_message'   => 'WESS credentials not configured for this location.',
-                'response_body'   => 'WESS not configured',
-                'response_status' => 200,
-            ]);
-            return;
-        }
-
-        if (!$config->is_sync_enabled) {
-            $log->update([
-                'response_body'   => 'Master sync is paused for this location. Skipping WESS booking push.',
-                'response_status' => 200,
-            ]);
-            return;
-        }
-
-        $wessClient = new WessClient($config->api_token, $config->base_url);
-        $branchId   = $config->branch_id ?: 1;
-
-        // Appointment object per official GHL docs schema
-        $appointment   = $payload['appointment'] ?? $payload;
-        $appointmentId = $appointment['id'] ?? $payload['appointmentId'] ?? ($payload['id'] ?? null);
-        $contactId     = $appointment['contactId'] ?? $payload['contactId'] ?? null;
-        $status        = strtolower($appointment['appointmentStatus'] ?? $payload['appointmentStatus'] ?? '');
-        $notes         = (string)($appointment['notes'] ?? $payload['notes'] ?? ($payload['appointment']['notes'] ?? ''));
-        $title         = (string)($appointment['title'] ?? $payload['title'] ?? ($payload['appointment']['title'] ?? ''));
-
-        // Echo Loop Prevention (3-Tier Protection):
-        // When WESS sync pushes an appointment to GHL, GHL triggers AppointmentCreate / AppointmentUpdate.
-        // We prevent feedback loops through 3 layers:
-        // 1. Debounce Cache Lock: 45s TTL set when WESS pushes to GHL.
-        // 2. Metadata Signature: If notes contain 'WESS Booking ID:' or title contains WESS tag.
-        // 3. Database Check: If this GHL appointment is already linked to a WESS booking in synced_appointments.
-        $isCancellation = str_contains($type, 'delete') || str_contains($type, 'cancel') || in_array($status, ['cancelled', 'canceled', 'deleted']);
-        if (!$isCancellation) {
-            // Layer 1: 45s Cache Debounce Lock
-            if ($appointmentId && Cache::has("wess_origin_appt_{$appointmentId}")) {
-                Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} due to active 45s sync debounce lock.");
+        try {
+            if (empty($locationId)) {
                 $log->update([
                     'response_status' => 200,
-                    'response_body'   => json_encode([
-                        'status'  => 'skipped',
-                        'message' => 'Loop prevention: Appointment originated from recent WESS sync. No re-sync needed.',
-                    ]),
+                    'error_message'   => 'Missing location_id in appointment webhook payload',
+                    'response_body'   => json_encode(['status' => 'skipped', 'message' => 'Missing location_id in webhook payload']),
                 ]);
                 return;
             }
 
-            // Layer 2: WESS Metadata Signature Check (in notes or title)
-            if (
-                str_contains($notes, 'WESS Booking ID:') ||
-                str_contains($notes, 'WESS ID:') ||
-                str_contains($title, '(Booked Slot)') ||
-                str_starts_with($title, 'WESS Appt:')
-            ) {
-                Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} as it contains WESS sync signature.");
+            $config = WessConfig::where('location_id', $locationId)->first();
+            if (!$config || empty($config->api_token)) {
                 $log->update([
+                    'error_message'   => 'WESS credentials not configured for this location.',
+                    'response_body'   => 'WESS not configured',
                     'response_status' => 200,
-                    'response_body'   => json_encode([
-                        'status'  => 'skipped',
-                        'message' => 'Loop prevention: Appointment contains WESS sync signature. Skipping duplicate creation in WESS.',
-                    ]),
                 ]);
                 return;
             }
 
-            // Layer 3: Persistent Database Mapping Check
-            if ($appointmentId) {
-                $existingSync = SyncedAppointment::where('location_id', $locationId)
-                    ->where('ghl_appointment_id', (string) $appointmentId)
-                    ->first();
+            if (!$config->is_sync_enabled) {
+                $log->update([
+                    'response_body'   => 'Master sync is paused for this location. Skipping WESS booking push.',
+                    'response_status' => 200,
+                ]);
+                return;
+            }
 
-                if ($existingSync && $existingSync->wess_appointment_id) {
-                    Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} as it is already tracked as WESS booking #{$existingSync->wess_appointment_id}.");
+            $wessClient = new WessClient($config->api_token, $config->base_url);
+            $branchId   = $config->branch_id ?: 1;
+
+            // Appointment object per official GHL docs schema
+            $appointment   = $payload['appointment'] ?? $payload;
+            $appointmentId = $appointment['id'] ?? $payload['appointmentId'] ?? ($payload['id'] ?? null);
+            $contactId     = $appointment['contactId'] ?? $payload['contactId'] ?? null;
+            $status        = strtolower($appointment['appointmentStatus'] ?? $payload['appointmentStatus'] ?? '');
+            $notes         = (string)($appointment['notes'] ?? $payload['notes'] ?? ($payload['appointment']['notes'] ?? ''));
+            $title         = (string)($appointment['title'] ?? $payload['title'] ?? ($payload['appointment']['title'] ?? ''));
+
+            // Echo Loop Prevention (3-Tier Protection):
+            // When WESS sync pushes an appointment to GHL, GHL triggers AppointmentCreate / AppointmentUpdate.
+            // We prevent feedback loops through 3 layers:
+            // 1. Debounce Cache Lock: 45s TTL set when WESS pushes to GHL.
+            // 2. Metadata Signature: If notes contain 'WESS Booking ID:' or title contains WESS tag.
+            // 3. Database Check: If this GHL appointment is already linked to a WESS booking in synced_appointments.
+            $isCancellation = str_contains($type, 'delete') || str_contains($type, 'cancel') || in_array($status, ['cancelled', 'canceled', 'deleted']);
+            if (!$isCancellation) {
+                // Layer 1: 45s Cache Debounce Lock
+                if ($appointmentId && Cache::has("wess_origin_appt_{$appointmentId}")) {
+                    Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} due to active 45s sync debounce lock.");
                     $log->update([
                         'response_status' => 200,
                         'response_body'   => json_encode([
-                            'status'              => 'skipped',
-                            'message'             => "Loop prevention: Appointment is already linked to WESS booking #{$existingSync->wess_appointment_id}.",
-                            'wess_appointment_id' => $existingSync->wess_appointment_id,
+                            'status'  => 'skipped',
+                            'message' => 'Loop prevention: Appointment originated from recent WESS sync. No re-sync needed.',
                         ]),
                     ]);
                     return;
                 }
-            }
-        }
 
-        try {
+                // Layer 2: WESS Metadata Signature Check (in notes or title)
+                if (
+                    str_contains($notes, 'WESS Booking ID:') ||
+                    str_contains($notes, 'WESS ID:') ||
+                    str_contains($title, '(Booked Slot)') ||
+                    str_starts_with($title, 'WESS Appt:')
+                ) {
+                    Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} as it contains WESS sync signature.");
+                    $log->update([
+                        'response_status' => 200,
+                        'response_body'   => json_encode([
+                            'status'  => 'skipped',
+                            'message' => 'Loop prevention: Appointment contains WESS sync signature. Skipping duplicate creation in WESS.',
+                        ]),
+                    ]);
+                    return;
+                }
+
+                // Layer 3: Persistent Database Mapping Check
+                if ($appointmentId) {
+                    $existingSync = SyncedAppointment::where('location_id', $locationId)
+                        ->where('ghl_appointment_id', (string) $appointmentId)
+                        ->first();
+
+                    if ($existingSync && $existingSync->wess_appointment_id) {
+                        Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} as it is already tracked as WESS booking #{$existingSync->wess_appointment_id}.");
+                        $log->update([
+                            'response_status' => 200,
+                            'response_body'   => json_encode([
+                                'status'              => 'skipped',
+                                'message'             => "Loop prevention: Appointment is already linked to WESS booking #{$existingSync->wess_appointment_id}.",
+                                'wess_appointment_id' => $existingSync->wess_appointment_id,
+                            ]),
+                        ]);
+                        return;
+                    }
+                }
+            }
+
             // Cancellation / Deletion Event
             if (str_contains($type, 'delete') || str_contains($type, 'cancel') || in_array($status, ['cancelled', 'canceled', 'deleted'])) {
                 $customerId = $payload['customerId'] ?? 1;
@@ -271,21 +275,43 @@ class GhlWebhookController extends Controller
                 }
             }
 
-            // 1. Lookup or Create Customer in WESS
-            $customer = null;
-            if (!empty($phone)) {
-                $customer = $wessClient->lookupCustomerByPhone($phone);
+            // If phone is still missing, cannot book in WESS without customer phone number
+            if (empty($phone)) {
+                Log::warning("Appointment {$appointmentId} has no contact phone number. Skipping WESS booking push.");
+                $log->update([
+                    'response_status' => 200,
+                    'response_body'   => json_encode([
+                        'status'  => 'skipped',
+                        'message' => 'Contact phone number is missing in CRM. WESS requires a customer phone number to book.',
+                    ]),
+                ]);
+                return;
+            }
 
-                if (!$customer) {
-                    $phoneData = WessClient::parsePhoneNumber($phone);
-                    $customer = $wessClient->createCustomer($branchId, [
-                        'first_name'                => $firstName ?: 'Customer',
-                        'last_name'                 => $lastName ?: '',
-                        'phone_mobile_country_code' => $phoneData['country_code'],
-                        'phone_mobile'              => $phoneData['mobile'],
-                        'email'                     => $email ?: '',
-                    ]);
-                }
+            // 1. Lookup or Create Customer in WESS
+            $customer = $wessClient->lookupCustomerByPhone($phone);
+
+            if (!$customer) {
+                $phoneData = WessClient::parsePhoneNumber($phone);
+                $customer = $wessClient->createCustomer($branchId, [
+                    'first_name'                => $firstName ?: 'Customer',
+                    'last_name'                 => $lastName ?: '',
+                    'phone_mobile_country_code' => $phoneData['country_code'],
+                    'phone_mobile'              => $phoneData['mobile'],
+                    'email'                     => $email ?: '',
+                ]);
+            }
+
+            if (empty($customer['id'])) {
+                Log::error("Failed to lookup or create WESS customer for phone {$phone}.");
+                $log->update([
+                    'response_status' => 200,
+                    'response_body'   => json_encode([
+                        'status'  => 'failed',
+                        'message' => "Failed to resolve or create customer in WESS for phone {$phone}.",
+                    ]),
+                ]);
+                return;
             }
 
             // Update GHL Contact custom fields (WESS Code & Last Visit)
@@ -305,106 +331,103 @@ class GhlWebhookController extends Controller
 
             // 2. Book appointment in WESS
             $wessAppointment = null;
-            if (!empty($customer['id'])) {
-                $services = $wessClient->getServices($branchId);
+            $services = $wessClient->getServices($branchId);
 
-                // Prioritize S01007 or WESS Generic Service if configured
-                $serviceId = null;
-                foreach ($services as $s) {
-                    $sCode = $s['code'] ?? ($s['service']['code'] ?? '');
-                    $sName = $s['name'] ?? ($s['service']['name'] ?? '');
-                    if (strcasecmp($sCode, 'S01007') === 0 || stripos($sName, 'WESS Generic') !== false || stripos($sName, 'Generic') !== false) {
-                        $serviceId = $s['id'] ?? ($s['product_id'] ?? ($s['service']['product_id'] ?? null));
-                        break;
-                    }
-                }
-
-                if (!$serviceId && !empty($services)) {
-                    $serviceId = $services[0]['id'] ?? ($services[0]['product_id'] ?? ($services[0]['service']['product_id'] ?? null));
-                }
-
-                if (!$serviceId) {
-                    // Fallback to default or 1223 if sandbox
-                    $serviceId = 1223;
-                }
-
-                $apptDate = !empty($startTime) ? date('Y-m-d H:i:s', strtotime($startTime)) : now()->format('Y-m-d H:i:s');
-
-                $bookingPayload = [
-                    'customer_id' => (int)$customer['id'],
-                    'date'        => $apptDate,
-                    'items'       => [
-                        ['product_id' => $serviceId]
-                    ],
-                ];
-
-                // Dynamically resolve WESS employee ID from CRM assignedUserId / calendarId
-                $assignedUserId = $appointment['assignedUserId'] ?? $payload['assignedUserId'] ?? ($payload['appointment']['assignedUserId'] ?? null);
-                $calendarId     = $appointment['calendarId'] ?? $payload['calendarId'] ?? ($payload['appointment']['calendarId'] ?? null);
-
-                try {
-                    $ghlCalendarService = app(GhlCalendarService::class);
-                    $therapistMap       = $ghlCalendarService->getTherapistCalendarMap($locationId, $config->company_id);
-
-                    $targetUser = null;
-                    if (!empty($assignedUserId) && isset($therapistMap['by_user_id'][$assignedUserId])) {
-                        $targetUser = $therapistMap['by_user_id'][$assignedUserId];
-                    } elseif (!empty($calendarId) && isset($therapistMap['by_cal_id'][$calendarId])) {
-                        $targetUser = $therapistMap['by_cal_id'][$calendarId];
-                    }
-
-                    if ($targetUser) {
-                        $wessEmployees = $wessClient->getEmployees($branchId);
-                        $crmFirst = strtolower(trim($targetUser['first_name'] ?? ''));
-                        $crmLast  = strtoupper(trim($targetUser['last_name'] ?? ''));
-
-                        foreach ($wessEmployees as $emp) {
-                            $wFirst = strtolower(trim($emp['first_name'] ?? ''));
-                            $wLast  = strtolower(trim($emp['last_name'] ?? ''));
-                            $wFull  = strtolower(preg_replace('/[^a-z0-9]/', '', "{$wFirst}{$wLast}"));
-                            $wCode  = strtoupper(trim($emp['code'] ?? ($emp['employee_code'] ?? '')));
-
-                            if (
-                                (!empty($crmLast) && !empty($wCode) && $crmLast === $wCode) ||
-                                (!empty($crmFirst) && $wFirst === $crmFirst) ||
-                                (!empty($crmFirst) && $wFull === strtolower(preg_replace('/[^a-z0-9]/', '', $crmFirst)))
-                            ) {
-                                $bookingPayload['employee_id'] = (int) $emp['id'];
-                                Log::info("Dynamically matched CRM user {$targetUser['user_name']} to WESS employee ID {$emp['id']} ({$emp['first_name']})");
-                                break;
-                            }
-                        }
-                    }
-                } catch (Exception $mapEx) {
-                    Log::warning("Could not auto-resolve therapist for WESS booking: " . $mapEx->getMessage());
-                }
-
-                $wessAppointment = $wessClient->bookAppointment($branchId, $bookingPayload);
-
-                // Persist synced appointment record to prevent duplicate loops
-                if (!empty($wessAppointment['id']) && $appointmentId) {
-                    $syncHash = md5($apptDate . ($wessAppointment['status'] ?? 'Request') . $serviceId . $customer['id']);
-                    SyncedAppointment::updateOrCreate(
-                        [
-                            'location_id'         => $locationId,
-                            'wess_appointment_id' => (string) $wessAppointment['id'],
-                        ],
-                        [
-                            'ghl_appointment_id'  => (string) $appointmentId,
-                            'ghl_contact_id'      => $contactId ? (string) $contactId : null,
-                            'calendar_id'         => $calendarId ? (string) $calendarId : null,
-                            'assigned_user_id'    => $assignedUserId ? (string) $assignedUserId : null,
-                            'title'               => $title,
-                            'status'              => (string) ($wessAppointment['status'] ?? 'Request'),
-                            'start_time'          => $apptDate,
-                            'end_time'            => !empty($appointment['endTime']) ? date('Y-m-d H:i:s', strtotime($appointment['endTime'])) : date('Y-m-d H:i:s', strtotime($apptDate . ' +1 hour')),
-                            'sync_hash'           => $syncHash,
-                            'last_synced_at'      => now(),
-                        ]
-                    );
+            // Prioritize S01007 or WESS Generic Service if configured
+            $serviceId = null;
+            foreach ($services as $s) {
+                $sCode = $s['code'] ?? ($s['service']['code'] ?? '');
+                $sName = $s['name'] ?? ($s['service']['name'] ?? '');
+                if (strcasecmp($sCode, 'S01007') === 0 || stripos($sName, 'WESS Generic') !== false || stripos($sName, 'Generic') !== false) {
+                    $serviceId = $s['id'] ?? ($s['product_id'] ?? ($s['service']['product_id'] ?? null));
+                    break;
                 }
             }
 
+            if (!$serviceId && !empty($services)) {
+                $serviceId = $services[0]['id'] ?? ($services[0]['product_id'] ?? ($services[0]['service']['product_id'] ?? null));
+            }
+
+            if (!$serviceId) {
+                // Fallback to default or 1223 if sandbox
+                $serviceId = 1223;
+            }
+
+            $apptDate = !empty($startTime) ? date('Y-m-d H:i:s', strtotime($startTime)) : now()->format('Y-m-d H:i:s');
+
+            $bookingPayload = [
+                'customer_id' => (int)$customer['id'],
+                'date'        => $apptDate,
+                'items'       => [
+                    ['product_id' => $serviceId]
+                ],
+            ];
+
+            // Dynamically resolve WESS employee ID from CRM assignedUserId / calendarId
+            $assignedUserId = $appointment['assignedUserId'] ?? $payload['assignedUserId'] ?? ($payload['appointment']['assignedUserId'] ?? null);
+            $calendarId     = $appointment['calendarId'] ?? $payload['calendarId'] ?? ($payload['appointment']['calendarId'] ?? null);
+
+            try {
+                $ghlCalendarService = app(GhlCalendarService::class);
+                $therapistMap       = $ghlCalendarService->getTherapistCalendarMap($locationId, $config->company_id);
+
+                $targetUser = null;
+                if (!empty($assignedUserId) && isset($therapistMap['by_user_id'][$assignedUserId])) {
+                    $targetUser = $therapistMap['by_user_id'][$assignedUserId];
+                } elseif (!empty($calendarId) && isset($therapistMap['by_cal_id'][$calendarId])) {
+                    $targetUser = $therapistMap['by_cal_id'][$calendarId];
+                }
+
+                if ($targetUser) {
+                    $wessEmployees = $wessClient->getEmployees($branchId);
+                    $crmFirst = strtolower(trim($targetUser['first_name'] ?? ''));
+                    $crmLast  = strtoupper(trim($targetUser['last_name'] ?? ''));
+
+                    foreach ($wessEmployees as $emp) {
+                        $wFirst = strtolower(trim($emp['first_name'] ?? ''));
+                        $wLast  = strtolower(trim($emp['last_name'] ?? ''));
+                        $wFull  = strtolower(preg_replace('/[^a-z0-9]/', '', "{$wFirst}{$wLast}"));
+                        $wCode  = strtoupper(trim($emp['code'] ?? ($emp['employee_code'] ?? '')));
+
+                        if (
+                            (!empty($crmLast) && !empty($wCode) && $crmLast === $wCode) ||
+                            (!empty($crmFirst) && $wFirst === $crmFirst) ||
+                            (!empty($crmFirst) && $wFull === strtolower(preg_replace('/[^a-z0-9]/', '', $crmFirst)))
+                        ) {
+                            $bookingPayload['employee_id'] = (int) $emp['id'];
+                            Log::info("Dynamically matched CRM user {$targetUser['user_name']} to WESS employee ID {$emp['id']} ({$emp['first_name']})");
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception $mapEx) {
+                Log::warning("Could not auto-resolve therapist for WESS booking: " . $mapEx->getMessage());
+            }
+
+            $wessAppointment = $wessClient->bookAppointment($branchId, $bookingPayload);
+
+            // Persist synced appointment record to prevent duplicate loops
+            if (!empty($wessAppointment['id']) && $appointmentId) {
+                $syncHash = md5($apptDate . ($wessAppointment['status'] ?? 'Request') . $serviceId . $customer['id']);
+                SyncedAppointment::updateOrCreate(
+                    [
+                        'location_id'         => $locationId,
+                        'wess_appointment_id' => (string) $wessAppointment['id'],
+                    ],
+                    [
+                        'ghl_appointment_id'  => (string) $appointmentId,
+                        'ghl_contact_id'      => $contactId ? (string) $contactId : null,
+                        'calendar_id'         => $calendarId ? (string) $calendarId : null,
+                        'assigned_user_id'    => $assignedUserId ? (string) $assignedUserId : null,
+                        'title'               => $title,
+                        'status'              => (string) ($wessAppointment['status'] ?? 'Request'),
+                        'start_time'          => $apptDate,
+                        'end_time'            => !empty($appointment['endTime']) ? date('Y-m-d H:i:s', strtotime($appointment['endTime'])) : date('Y-m-d H:i:s', strtotime($apptDate . ' +1 hour')),
+                        'sync_hash'           => $syncHash,
+                        'last_synced_at'      => now(),
+                    ]
+                );
+            }
 
             $endpoint = "{$config->base_url}/branches/{$branchId}/appointments";
             $log->update([
@@ -421,12 +444,15 @@ class GhlWebhookController extends Controller
                 ]),
             ]);
 
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             Log::error("Failed to process appointment webhook for location {$locationId}: " . $e->getMessage());
             $log->update([
                 'error_message'   => $e->getMessage(),
                 'response_status' => 200, // Return 200 per GHL doc to avoid circuit breaker
-                'response_body'   => json_encode(['error' => $e->getMessage()]),
+                'response_body'   => json_encode([
+                    'status'  => 'error',
+                    'message' => $e->getMessage(),
+                ]),
             ]);
         }
     }

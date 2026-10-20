@@ -2563,11 +2563,19 @@
 
         // Pretty JSON Response
         const responseBox = document.getElementById('modalResponse');
-        try {
-            const parsed = typeof item.response_body === 'string' ? JSON.parse(item.response_body) : item.response_body;
-            responseBox.textContent = JSON.stringify(parsed || {}, null, 2);
-        } catch(e) {
-            responseBox.textContent = String(item.response_body || '{}');
+        if (!item.response_body) {
+            responseBox.textContent = item.error_message
+                ? 'Error: ' + item.error_message
+                : (item.response_status ? 'HTTP ' + item.response_status + ': No response body returned' : 'No response body recorded.');
+        } else {
+            try {
+                const parsed = typeof item.response_body === 'string' ? JSON.parse(item.response_body) : item.response_body;
+                responseBox.textContent = (typeof parsed === 'object' && parsed !== null)
+                    ? JSON.stringify(parsed, null, 2)
+                    : String(parsed);
+            } catch(e) {
+                responseBox.textContent = String(item.response_body || 'No response body recorded.');
+            }
         }
 
         switchModalView('both');
