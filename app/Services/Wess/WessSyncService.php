@@ -135,19 +135,23 @@ class WessSyncService
                     }
 
                     // Dynamically resolve therapist personal calendar for this appointment
+                    // If this appointment was already tracked on a specific CRM calendar, preserve it as the primary fallback
+                    $fallbackCalId  = $existingSync?->calendar_id ?: ($liveConfig->calendar_id ?: null);
+                    $fallbackUserId = $existingSync?->assigned_user_id ?: ($liveConfig->calendar_user_id ?: null);
+
                     $resolved = $this->ghlCalendarService->resolveTherapistCalendar(
                         $therapistMap,
                         $appt,
-                        $liveConfig->calendar_id ?: null,
-                        $liveConfig->calendar_user_id ?: null
+                        $fallbackCalId,
+                        $fallbackUserId
                     );
 
                     $this->ghlCalendarService->syncAppointmentToGhl(
                         $locationId, 
                         $appt, 
                         true, // Mask private details for public slot view (Excel Item A.4)
-                        $resolved['calendar_id'] ?: ($liveConfig->calendar_id ?: null),
-                        $resolved['user_id'] ?: ($liveConfig->calendar_user_id ?: null)
+                        $resolved['calendar_id'] ?: $fallbackCalId,
+                        $resolved['user_id'] ?: $fallbackUserId
                     );
                     $syncedCount++;
 

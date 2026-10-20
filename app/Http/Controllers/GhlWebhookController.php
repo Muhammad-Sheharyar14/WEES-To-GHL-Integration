@@ -11,6 +11,7 @@ use App\Services\Wess\WessClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 use Exception;
 
 class GhlWebhookController extends Controller
@@ -353,7 +354,11 @@ class GhlWebhookController extends Controller
                 $serviceId = 1223;
             }
 
-            $apptDate = !empty($startTime) ? date('Y-m-d H:i:s', strtotime($startTime)) : now()->format('Y-m-d H:i:s');
+            // Convert CRM start time to Branch local timezone (Asia/Singapore, UTC+8) for WESS booking
+            $branchTz = 'Asia/Singapore';
+            $apptDate = !empty($startTime) 
+                ? Carbon::parse($startTime)->setTimezone($branchTz)->format('Y-m-d H:i:s') 
+                : now($branchTz)->format('Y-m-d H:i:s');
 
             $bookingPayload = [
                 'customer_id' => (int)$customer['id'],
@@ -364,12 +369,17 @@ class GhlWebhookController extends Controller
             ];
 
             // Dynamically resolve WESS employee ID from CRM assignedUserId / calendarId
-            $assignedUserId = $appointment['assignedUserId'] ?? $payload['assignedUserId'] ?? ($payload['appointment']['assignedUserId'] ?? null);
+            $assignedUserId = $appointment['assignedUserId'] ?? $appointment['userId'] ?? $payload['assignedUserId'] ?? $payload['userId'] ?? ($payload['appointment']['assignedUserId'] ?? null);
             $calendarId     = $appointment['calendarId'] ?? $payload['calendarId'] ?? ($payload['appointment']['calendarId'] ?? null);
 
             try {
                 $ghlCalendarService = app(GhlCalendarService::class);
                 $therapistMap       = $ghlCalendarService->getTherapistCalendarMap($locationId, $config->company_id);
+
+                // If assignedUserId was provided but not found in cache, force fresh map
+                if (!empty($assignedUserId) && !isset($therapistMap['by_user_id'][$assignedUserId])) {
+                    $therapistMap = $ghlCalendarService->getTherapistCalendarMap($locationId, $config->company_id, true);
+                }
 
                 $targetUser = null;
                 if (!empty($assignedUserId) && isset($therapistMap['by_user_id'][$assignedUserId])) {
@@ -380,8 +390,10 @@ class GhlWebhookController extends Controller
 
                 if ($targetUser) {
                     $wessEmployees = $wessClient->getEmployees($branchId);
-                    $crmFirst = strtolower(trim($targetUser['first_name'] ?? ''));
-                    $crmLast  = strtoupper(trim($targetUser['last_name'] ?? ''));
+                    $crmFirst    = strtolower(trim($targetUser['first_name'] ?? ''));
+                    $crmLast     = strtoupper(trim($targetUser['last_name'] ?? ''));
+                    $crmUserName = strtolower(trim($targetUser['user_name'] ?? ($targetUser['name'] ?? '')));
+                    $crmFullNorm = strtolower(preg_replace('/[^a-z0-9]/', '', "{$crmFirst}{$crmLast}"));
 
                     foreach ($wessEmployees as $emp) {
                         $wFirst = strtolower(trim($emp['first_name'] ?? ''));
@@ -392,9 +404,12 @@ class GhlWebhookController extends Controller
                         if (
                             (!empty($crmLast) && !empty($wCode) && $crmLast === $wCode) ||
                             (!empty($crmFirst) && $wFirst === $crmFirst) ||
-                            (!empty($crmFirst) && $wFull === strtolower(preg_replace('/[^a-z0-9]/', '', $crmFirst)))
+                            (!empty($wFirst) && str_starts_with($crmUserName, $wFirst)) ||
+                            (!empty($wFirst) && str_starts_with($crmFirst, $wFirst)) ||
+                            (!empty($wFull) && str_contains($crmFullNorm, $wFull))
                         ) {
                             $bookingPayload['employee_id'] = (int) $emp['id'];
+                            $bookingPayload['employees']   = [(int) $emp['id']];
                             Log::info("Dynamically matched CRM user {$targetUser['user_name']} to WESS employee ID {$emp['id']} ({$emp['first_name']})");
                             break;
                         }

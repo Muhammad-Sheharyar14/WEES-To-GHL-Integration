@@ -486,15 +486,15 @@ class GhlCalendarService
         }
 
         // Dynamic appointment status mapping (WESS -> CRM)
+        // GHL calendar grid filters by 'confirmed' by default; mapping active WESS requests to 'confirmed' prevents them from being hidden
         $rawStatus = strtolower(trim($wessAppointment['status'] ?? 'open'));
         $appointmentStatus = match ($rawStatus) {
-            'request'              => 'new',
-            'open', 'confirmed'    => 'confirmed',
-            'cancelled', 'deleted' => 'cancelled',
-            'completed', 'done'    => 'completed',
-            'arrived', 'check-in'  => 'showed',
-            'no show', 'no-show'   => 'noshow',
-            default                => 'confirmed',
+            'request', 'open', 'confirmed' => 'confirmed',
+            'cancelled', 'deleted'         => 'cancelled',
+            'completed', 'done'            => 'completed',
+            'arrived', 'check-in'          => 'showed',
+            'no show', 'no-show'           => 'noshow',
+            default                        => 'confirmed',
         };
 
         $payload = [
