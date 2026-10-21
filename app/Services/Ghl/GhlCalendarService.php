@@ -531,6 +531,16 @@ class GhlCalendarService
         $existingGhlId = $existingRecord?->ghl_appointment_id;
         $isUpdate      = !empty($existingGhlId);
 
+        // Layer 2 Real-Time Duplicate Check: If not in synced_appointments, check if CRM already has this event
+        if (!$isUpdate && $wessApptId) {
+            $existingCrmId = $this->findExistingCrmEventByWessId($locationId, $wessApptId, $startTime, $calendarId);
+            if ($existingCrmId) {
+                $existingGhlId = $existingCrmId;
+                $isUpdate      = true;
+                Log::info("Layer 2: Detected existing CRM appointment {$existingGhlId} for WESS #{$wessApptId}. Updating via PUT to prevent duplicate.");
+            }
+        }
+
         try {
             $res      = null;
             $endpoint = 'calendars/events/appointments';
@@ -731,6 +741,151 @@ class GhlCalendarService
             }
         } catch (Exception $e) {
             Log::warning("Could not fetch GHL contact {$contactId}: " . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    /**
+     * Fetch existing CRM calendar events for a location in a time range (Self-Healing Layer 2)
+     */
+    public function getCalendarEvents(string $locationId, $dateFrom, $dateTo, ?string $calendarId = null, ?string $companyId = null): array
+    {
+        try {
+            $startMs = is_numeric($dateFrom) ? (int)$dateFrom : (int)(Carbon::parse($dateFrom)->startOfDay()->getTimestamp() * 1000);
+            $endMs   = is_numeric($dateTo) ? (int)$dateTo : (int)(Carbon::parse($dateTo)->endOfDay()->getTimestamp() * 1000);
+
+            $params = [
+                'locationId' => $locationId,
+                'startTime'  => (string) $startMs,
+                'endTime'    => (string) $endMs,
+            ];
+            if (!empty($calendarId)) {
+                $params['calendarId'] = $calendarId;
+            }
+
+            $res = $this->ghlRequest('GET', 'calendars/events', $locationId, $params, $companyId);
+
+            if ($res && $res->successful()) {
+                $json = $res->json();
+                return $json['events'] ?? (is_array($json) ? $json : []);
+            }
+
+            Log::warning("Failed to fetch CRM calendar events for location {$locationId}: " . ($res ? $res->status() : 'null'));
+        } catch (Exception $e) {
+            Log::warning("Exception fetching CRM calendar events for location {$locationId}: " . $e->getMessage());
+        }
+
+        return [];
+    }
+
+    /**
+     * Self-Healing Reconciliation: Scan existing CRM calendar events and auto-rebuild
+     * synced_appointments table mappings to prevent any duplicates upon app reinstall/reconnect.
+     */
+    public function reconcileExistingCrmEvents(string $locationId, $dateFrom, $dateTo, ?string $companyId = null): int
+    {
+        $events = $this->getCalendarEvents($locationId, $dateFrom, $dateTo, null, $companyId);
+        if (empty($events) || !is_array($events)) {
+            return 0;
+        }
+
+        $reconciled = 0;
+
+        foreach ($events as $event) {
+            if (!is_array($event) || empty($event['id'])) {
+                continue;
+            }
+
+            $wessApptId = null;
+
+            // 1. Check notes for WESS Booking ID signature: "WESS Booking ID: 12345"
+            $notes = $event['notes'] ?? ($event['description'] ?? '');
+            if (preg_match('/WESS\s+Booking\s+ID:\s*([0-9a-zA-Z_-]+)/i', $notes, $matches)) {
+                $wessApptId = $matches[1];
+            }
+
+            // 2. Fallback: Check title if notes signature was altered (e.g. "(WESS #12345)")
+            if (!$wessApptId && !empty($event['title']) && preg_match('/#(\d{5,})/i', $event['title'], $matches)) {
+                $wessApptId = $matches[1];
+            }
+
+            if (!$wessApptId) {
+                continue;
+            }
+
+            // Check if already present in synced_appointments
+            $existing = SyncedAppointment::where('location_id', $locationId)
+                ->where('wess_appointment_id', (string) $wessApptId)
+                ->first();
+
+            $startTime = !empty($event['startTime']) ? Carbon::parse($event['startTime'])->toIso8601String() : null;
+            $endTime   = !empty($event['endTime']) ? Carbon::parse($event['endTime'])->toIso8601String() : null;
+            $status    = $event['appointmentStatus'] ?? ($event['status'] ?? 'confirmed');
+            $syncHash  = md5(($startTime ?? '') . $status . ($event['title'] ?? ''));
+
+            if (!$existing) {
+                SyncedAppointment::create([
+                    'location_id'         => $locationId,
+                    'wess_appointment_id' => (string) $wessApptId,
+                    'ghl_appointment_id'  => (string) $event['id'],
+                    'ghl_contact_id'      => !empty($event['contactId']) ? (string) $event['contactId'] : null,
+                    'calendar_id'         => !empty($event['calendarId']) ? (string) $event['calendarId'] : null,
+                    'assigned_user_id'    => !empty($event['assignedUserId']) ? (string) $event['assignedUserId'] : null,
+                    'title'               => $event['title'] ?? '',
+                    'status'              => (string) $status,
+                    'start_time'          => $startTime,
+                    'end_time'            => $endTime,
+                    'sync_hash'           => $syncHash,
+                    'last_synced_at'      => now(),
+                ]);
+                $reconciled++;
+                Log::info("Self-Healing Layer 2: Reconciled existing CRM appointment {$event['id']} for WESS appointment {$wessApptId} in location {$locationId}");
+            } else {
+                // If GHL appointment ID was missing or changed, repair it
+                if (empty($existing->ghl_appointment_id) || $existing->ghl_appointment_id !== (string) $event['id']) {
+                    $existing->update([
+                        'ghl_appointment_id' => (string) $event['id'],
+                        'calendar_id'        => !empty($event['calendarId']) ? (string) $event['calendarId'] : $existing->calendar_id,
+                        'assigned_user_id'   => !empty($event['assignedUserId']) ? (string) $event['assignedUserId'] : $existing->assigned_user_id,
+                        'last_synced_at'     => now(),
+                    ]);
+                    $reconciled++;
+                }
+            }
+        }
+
+        return $reconciled;
+    }
+
+    /**
+     * Real-time duplicate check for a single WESS appointment ID against CRM calendar
+     */
+    public function findExistingCrmEventByWessId(string $locationId, string|int $wessApptId, string $startTime, ?string $calendarId = null): ?string
+    {
+        try {
+            $parsedStart = Carbon::parse($startTime);
+            $searchEvents = $this->getCalendarEvents(
+                $locationId, 
+                $parsedStart->copy()->subHours(2), 
+                $parsedStart->copy()->addHours(2), 
+                $calendarId
+            );
+
+            foreach ($searchEvents as $ev) {
+                if (!is_array($ev) || empty($ev['id'])) {
+                    continue;
+                }
+                $evNotes = $ev['notes'] ?? ($ev['description'] ?? '');
+                if (preg_match('/WESS\s+Booking\s+ID:\s*' . preg_quote((string) $wessApptId, '/') . '\b/i', $evNotes)) {
+                    return (string) $ev['id'];
+                }
+                if (!empty($ev['title']) && str_contains($ev['title'], (string) $wessApptId)) {
+                    return (string) $ev['id'];
+                }
+            }
+        } catch (Exception $e) {
+            Log::warning("Error in findExistingCrmEventByWessId: " . $e->getMessage());
         }
 
         return null;

@@ -164,6 +164,11 @@ class GhlWebhookController extends Controller
             $status        = strtolower($appointment['appointmentStatus'] ?? $payload['appointmentStatus'] ?? '');
             $notes         = (string)($appointment['notes'] ?? $payload['notes'] ?? ($payload['appointment']['notes'] ?? ''));
             $title         = (string)($appointment['title'] ?? $payload['title'] ?? ($payload['appointment']['title'] ?? ''));
+            $startTime     = $appointment['startTime'] ?? $payload['startTime'] ?? ($payload['appointmentStartTime'] ?? null);
+            $phone         = $appointment['phone'] ?? $payload['phone'] ?? ($payload['contact']['phone'] ?? '');
+            $firstName     = $appointment['firstName'] ?? $payload['firstName'] ?? ($payload['contact']['firstName'] ?? '');
+            $lastName      = $appointment['lastName'] ?? $payload['lastName'] ?? ($payload['contact']['lastName'] ?? '');
+            $email         = $appointment['email'] ?? $payload['email'] ?? ($payload['contact']['email'] ?? '');
 
             // Echo Loop Prevention (3-Tier Protection):
             // When WESS sync pushes an appointment to GHL, GHL triggers AppointmentCreate / AppointmentUpdate.
@@ -227,38 +232,175 @@ class GhlWebhookController extends Controller
 
             // Cancellation / Deletion Event
             if (str_contains($type, 'delete') || str_contains($type, 'cancel') || in_array($status, ['cancelled', 'canceled', 'deleted'])) {
-                $customerId = $payload['customerId'] ?? 1;
-
                 if ($appointmentId) {
                     $synced = SyncedAppointment::where('location_id', $locationId)
                         ->where('ghl_appointment_id', (string) $appointmentId)
                         ->first();
-                    $wessApptId = $synced?->wess_appointment_id ?? $appointmentId;
 
-                    $endpoint = "{$config->base_url}/branches/{$branchId}/appointments/{$wessApptId}/cancel";
-                    $res = $wessClient->cancelAppointment($branchId, $wessApptId, $customerId);
+                    $wessApptId = $synced?->wess_appointment_id;
 
-                    if ($synced) {
-                        $synced->update(['status' => 'cancelled']);
+                    // Fallback 1: Extract WESS Booking ID from notes or title
+                    if (!$wessApptId) {
+                        $rawNotes = (string) ($appointment['notes'] ?? $payload['notes'] ?? ($payload['appointment']['notes'] ?? ''));
+                        $rawTitle = (string) ($appointment['title'] ?? $payload['title'] ?? ($payload['appointment']['title'] ?? ''));
+
+                        if (preg_match('/WESS\s+Booking\s+ID:\s*([0-9a-zA-Z_-]+)/i', $rawNotes, $m)) {
+                            $wessApptId = $m[1];
+                            Log::info("Cancellation Auto-Recovery: Found WESS Booking ID {$wessApptId} in appointment notes.");
+                        } elseif (preg_match('/#(\d{5,})/i', $rawTitle, $m)) {
+                            $wessApptId = $m[1];
+                            Log::info("Cancellation Auto-Recovery: Found WESS Booking ID {$wessApptId} in appointment title.");
+                        } elseif (is_numeric($appointmentId) || preg_match('/^appt_(\d+)$/', (string)$appointmentId)) {
+                            $wessApptId = (string) $appointmentId;
+                        }
                     }
 
-                    $log->update([
-                        'endpoint'        => $endpoint,
-                        'method'          => 'PATCH',
-                        'response_status' => 200,
-                        'response_body'   => json_encode($res),
-                    ]);
+                    // Fallback 2: If notes/title was missing from payload, query CRM calendar events
+                    if (!$wessApptId) {
+                        try {
+                            $ghlCalendarService = app(GhlCalendarService::class);
+                            $dateFrom = !empty($startTime) ? Carbon::parse($startTime)->subDays(1) : now()->subDays(7);
+                            $dateTo   = !empty($startTime) ? Carbon::parse($startTime)->addDays(1) : now()->addDays(30);
+                            $candidateEvents = $ghlCalendarService->getCalendarEvents($locationId, $dateFrom, $dateTo);
+
+                            foreach ($candidateEvents as $ev) {
+                                if (($ev['id'] ?? '') === (string) $appointmentId) {
+                                    $evNotes = $ev['notes'] ?? ($ev['description'] ?? '');
+                                    $evTitle = $ev['title'] ?? '';
+                                    if (preg_match('/WESS\s+Booking\s+ID:\s*([0-9a-zA-Z_-]+)/i', $evNotes, $m)) {
+                                        $wessApptId = $m[1];
+                                        Log::info("Cancellation Auto-Recovery: Found WESS Booking ID {$wessApptId} from CRM calendar event notes.");
+                                        break;
+                                    } elseif (preg_match('/#(\d{5,})/i', $evTitle, $m)) {
+                                        $wessApptId = $m[1];
+                                        Log::info("Cancellation Auto-Recovery: Found WESS Booking ID {$wessApptId} from CRM calendar event title.");
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch (\Throwable $evEx) {
+                            Log::warning("Could not auto-fetch calendar event for cancellation: " . $evEx->getMessage());
+                        }
+                    }
+
+                    // Fallback 3: If phone is missing but contactId is present, fetch contact directly from GHL API
+                    if (empty($phone) && !empty($contactId)) {
+                        try {
+                            $ghlCalendarService = app(GhlCalendarService::class);
+                            $ghlContact = $ghlCalendarService->getContact($locationId, $contactId);
+                            $phone = $ghlContact['phone'] ?? '';
+                        } catch (\Throwable $contactEx) {
+                            Log::warning("Could not fetch contact {$contactId} for cancellation: " . $contactEx->getMessage());
+                        }
+                    }
+
+                    // Fallback 4: Check WESS candidate appointments around this time by customer phone
+                    if (!$wessApptId && !empty($startTime) && !empty($phone)) {
+                        try {
+                            $parsedStart = Carbon::parse($startTime);
+                            $candidateAppts = $wessClient->getAppointments($branchId, [
+                                'date_from' => $parsedStart->copy()->subHours(2)->format('Y-m-d H:i:s'),
+                                'date_to'   => $parsedStart->copy()->addHours(2)->format('Y-m-d H:i:s'),
+                            ]);
+                            $cleanPhone = WessClient::parsePhoneNumber($phone)['mobile'];
+                            $bestMatch  = null;
+                            $minDiff    = PHP_INT_MAX;
+
+                            foreach ($candidateAppts as $cAppt) {
+                                $cPhone = $cAppt['customer']['phone_mobile'] ?? ($cAppt['phone'] ?? '');
+                                if (!empty($cleanPhone) && str_contains($cPhone, $cleanPhone)) {
+                                    $cDate = !empty($cAppt['date']) ? Carbon::parse($cAppt['date']) : null;
+                                    if ($cDate) {
+                                        $diffMinutes = abs($cDate->diffInMinutes($parsedStart));
+                                        if ($diffMinutes <= 120 && $diffMinutes < $minDiff) {
+                                            $minDiff   = $diffMinutes;
+                                            $bestMatch = $cAppt;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if ($bestMatch) {
+                                $wessApptId = (string) $bestMatch['id'];
+                                $customerId = $bestMatch['customer_id'] ?? ($bestMatch['customer']['id'] ?? null);
+                                Log::info("Cancellation Auto-Recovery: Matched WESS appointment ID {$wessApptId} by phone & closest slot window (diff: {$minDiff} mins).");
+                            }
+                        } catch (\Throwable $searchEx) {
+                            Log::warning("Could not auto-search candidate WESS appointments: " . $searchEx->getMessage());
+                        }
+                    }
+
+                    // Resolve real customer ID for WESS cancellation
+                    $customerId = $payload['customerId'] ?? ($payload['customer_id'] ?? null);
+                    if (empty($customerId) && !empty($phone)) {
+                        try {
+                            $custLookup = $wessClient->lookupCustomerByPhone($phone);
+                            if (!empty($custLookup['id'])) {
+                                $customerId = (int) $custLookup['id'];
+                            }
+                        } catch (\Throwable $custEx) {
+                            Log::warning("Could not lookup customer by phone for cancellation: " . $custEx->getMessage());
+                        }
+                    }
+
+                    if (empty($customerId)) {
+                        $customerId = 1; // Fallback
+                    }
+
+                    if ($wessApptId) {
+                        $endpoint = "{$config->base_url}/branches/{$branchId}/appointments/{$wessApptId}/cancel";
+                        try {
+                            $res = $wessClient->cancelAppointment($branchId, $wessApptId, $customerId);
+                        } catch (\Throwable $cancelEx) {
+                            // If appointment is already cancelled in WESS, treat as success
+                            if (stripos($cancelEx->getMessage(), 'cancel') !== false || stripos($cancelEx->getMessage(), 'already') !== false) {
+                                Log::info("WESS appointment {$wessApptId} already cancelled: " . $cancelEx->getMessage());
+                                $res = ['status' => 'already_cancelled', 'message' => $cancelEx->getMessage()];
+                            } else {
+                                throw $cancelEx;
+                            }
+                        }
+
+                        if ($synced) {
+                            $synced->update(['status' => 'cancelled']);
+                        } else {
+                            SyncedAppointment::updateOrCreate(
+                                [
+                                    'location_id'         => $locationId,
+                                    'wess_appointment_id' => (string) $wessApptId,
+                                ],
+                                [
+                                    'ghl_appointment_id' => (string) $appointmentId,
+                                    'ghl_contact_id'     => $contactId ? (string) $contactId : null,
+                                    'status'             => 'cancelled',
+                                    'last_synced_at'     => now(),
+                                ]
+                            );
+                        }
+
+                        $log->update([
+                            'endpoint'        => $endpoint,
+                            'method'          => 'PATCH',
+                            'response_status' => 200,
+                            'response_body'   => json_encode($res),
+                        ]);
+                    } else {
+                        Log::warning("Cancellation skipped for appointment {$appointmentId}: No corresponding WESS booking ID found.");
+                        $log->update([
+                            'response_status' => 200,
+                            'response_body'   => json_encode([
+                                'status'  => 'skipped',
+                                'message' => "Appointment {$appointmentId} could not be linked to any WESS booking ID. Skipped cancellation in WESS.",
+                            ]),
+                        ]);
+                    }
                 }
                 return;
             }
 
             // Booking / Creation / Update Event
-            // Extract contact details
-            $phone     = $appointment['phone'] ?? $payload['phone'] ?? ($payload['contact']['phone'] ?? '');
-            $firstName = $appointment['firstName'] ?? $payload['firstName'] ?? ($payload['contact']['firstName'] ?? '');
-            $lastName  = $appointment['lastName'] ?? $payload['lastName'] ?? ($payload['contact']['lastName'] ?? '');
-            $email     = $appointment['email'] ?? $payload['email'] ?? ($payload['contact']['email'] ?? '');
-            $startTime = $appointment['startTime'] ?? $payload['startTime'] ?? ($payload['appointmentStartTime'] ?? now()->addDay()->format('Y-m-d 10:00:00'));
+            // Ensure default start time if not present
+            $startTime = $startTime ?? now()->addDay()->format('Y-m-d 10:00:00');
 
             // If phone is missing but contactId is present, fetch contact directly from GHL API
             if (empty($phone) && !empty($contactId)) {
@@ -605,9 +747,9 @@ class GhlWebhookController extends Controller
         $logCount = WebhookLog::where('location_id', $locationId)->delete();
         $cleanupNotes[] = "Deleted {$logCount} webhook logs";
 
-        // 4. Delete Synced Appointments mapping for this location
-        $apptCount = SyncedAppointment::where('location_id', $locationId)->delete();
-        $cleanupNotes[] = "Deleted {$apptCount} synced appointments";
+        // NOTE: We deliberately PRESERVE SyncedAppointment records here (Layer 1 Protection).
+        // Preserving the mapping table ensures that if the user reinstalls/reconnects the app,
+        // previous appointments are remembered and will NOT be duplicated on CRM calendars.
 
         Log::info("Completed cleanup for GHL location {$locationId}: " . implode('; ', $cleanupNotes));
     }

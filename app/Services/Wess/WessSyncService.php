@@ -103,6 +103,15 @@ class WessSyncService
                 ? $this->ghlCalendarService->getTherapistCalendarMap($locationId, $config->company_id)
                 : [];
 
+            // Self-Healing Layer 2: Auto-reconcile existing CRM calendar events
+            // If synced_appointments was ever wiped (e.g. after reinstall/reconnect), this rebuilds the links
+            // from existing CRM calendar events so they are updated/skipped, preventing duplicate bookings.
+            if (!empty($appointments)) {
+                $dateFrom = $params['filter']['date_from'];
+                $dateTo   = $params['filter']['date_to'];
+                $this->ghlCalendarService->reconcileExistingCrmEvents($locationId, $dateFrom, $dateTo, $config->company_id);
+            }
+
             // 2. Sync appointments to CRM calendar (Excel Item A.1 & A.4)
             // If appointments is empty (0 appointments in WESS), loop does not run and CRM is NOT called!
             foreach ($appointments as $appt) {

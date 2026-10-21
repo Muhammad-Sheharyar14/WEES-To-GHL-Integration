@@ -2722,13 +2722,20 @@
         const baseUrl    = document.getElementById('base_url').value;
         const token      = document.getElementById('api_token').value;
         const branchSelect = document.getElementById('branch_id');
-        const branchId   = branchSelect.value;
-        const branchName = branchSelect.options[branchSelect.selectedIndex]?.text || '';
+        const branchId   = branchSelect ? branchSelect.value : '';
+        const branchName = (branchSelect && branchSelect.selectedIndex >= 0 && branchSelect.options && branchSelect.options[branchSelect.selectedIndex]) 
+            ? branchSelect.options[branchSelect.selectedIndex].text 
+            : '';
         const calendarSelect = document.getElementById('calendar_id');
-        const calendarId     = calendarSelect.value;
-        const calendarName   = document.getElementById('calendar_name').value || calendarSelect.options[calendarSelect.selectedIndex]?.text || '';
-        const calendarUserId = document.getElementById('calendar_user_id').value || '';
-        const syncEnabled= document.getElementById('masterSyncToggle').checked;
+        const calendarId     = calendarSelect ? calendarSelect.value : '';
+        const calendarNameInput = document.getElementById('calendar_name');
+        const calendarName   = (calendarNameInput ? calendarNameInput.value : '') 
+            || (calendarSelect && calendarSelect.options && calendarSelect.selectedIndex >= 0 ? calendarSelect.options[calendarSelect.selectedIndex]?.text : '') 
+            || 'Dynamic Staff Calendars';
+        const calendarUserIdInput = document.getElementById('calendar_user_id');
+        const calendarUserId = calendarUserIdInput ? calendarUserIdInput.value : '';
+        const syncToggle = document.getElementById('masterSyncToggle');
+        const syncEnabled= syncToggle ? syncToggle.checked : true;
 
         if (!token) {
             notify('warning', 'Token Required', 'Please provide a valid WESS API token.');
@@ -2821,7 +2828,10 @@
         }
     });
 
-    document.getElementById('calendar_id').addEventListener('change', handleCalendarSelectionChange);
+    const calIdEl = document.getElementById('calendar_id');
+    if (calIdEl && calIdEl.tagName === 'SELECT') {
+        calIdEl.addEventListener('change', handleCalendarSelectionChange);
+    }
 
     // Run on startup
     window.addEventListener('DOMContentLoaded', getUserData);

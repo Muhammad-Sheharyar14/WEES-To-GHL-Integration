@@ -326,5 +326,144 @@ class SyncedAppointmentTest extends TestCase
             'event_type'  => 'WessSyncStoppedByUser',
         ]);
     }
+
+    public function test_layer2_reconciliation_prevents_duplicate_when_mapping_table_is_empty(): void
+    {
+        // 1. synced_appointments table is completely empty (e.g. after uninstall / reconnect)
+        $this->assertEquals(0, SyncedAppointment::count());
+
+        $hasPutCalled  = false;
+        $hasPostCalled = false;
+
+        Http::fake([
+            // WESS API returns appointment #777
+            'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
+                'data' => [
+                    [
+                        'id'              => 777,
+                        'date'            => '2026-10-26T10:00:00.000000Z',
+                        'status'          => 'confirmed',
+                        'processing_time' => 30,
+                        'service_name'    => 'Deep Tissue Massage',
+                        'customer'        => [
+                            'first_name'   => 'Sherry',
+                            'last_name'    => 'Test',
+                            'phone_mobile' => '+6581234567',
+                        ],
+                    ],
+                ],
+                'meta' => [
+                    'pagination' => [
+                        'total'        => 1,
+                        'count'        => 1,
+                        'per_page'     => 100,
+                        'current_page' => 1,
+                        'total_pages'  => 1,
+                    ],
+                ],
+            ], 200),
+            // CRM calendars/events returns existing appointment in CRM with matching WESS Booking ID note
+            'https://services.leadconnectorhq.com/calendars/events?*' => Http::response([
+                'events' => [
+                    [
+                        'id'                => 'ghl_existing_event_777',
+                        'calendarId'        => 'cal_wess_123',
+                        'locationId'        => 'loc_test_sync',
+                        'contactId'         => 'cnt_sherry_123',
+                        'startTime'         => '2026-10-26T10:00:00.000Z',
+                        'endTime'           => '2026-10-26T10:30:00.000Z',
+                        'title'             => 'Sherry Test\'s Appointment',
+                        'appointmentStatus' => 'confirmed',
+                        'notes'             => 'WESS Booking ID: 777',
+                    ],
+                ],
+            ], 200),
+            'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
+                'contact' => ['id' => 'cnt_sherry_123'],
+            ], 200),
+            // If GHL receives a POST to create appointment, fail the test
+            'https://services.leadconnectorhq.com/calendars/events/appointments' => function ($request) use (&$hasPostCalled) {
+                if ($request->method() === 'POST') {
+                    $hasPostCalled = true;
+                }
+                return Http::response(['id' => 'unexpected_duplicate'], 201);
+            },
+            // If GHL receives a PUT to update appointment, record it
+            'https://services.leadconnectorhq.com/calendars/events/appointments/ghl_existing_event_777' => function ($request) use (&$hasPutCalled) {
+                if ($request->method() === 'PUT') {
+                    $hasPutCalled = true;
+                }
+                return Http::response(['id' => 'ghl_existing_event_777', 'status' => 'confirmed'], 200);
+            },
+        ]);
+
+        $syncService = app(WessSyncService::class);
+        $results = $syncService->syncAllLocations('loc_test_sync');
+
+        // Verify synced_appointments was automatically rebuilt from CRM events
+        $this->assertDatabaseHas('synced_appointments', [
+            'location_id'         => 'loc_test_sync',
+            'wess_appointment_id' => '777',
+            'ghl_appointment_id'  => 'ghl_existing_event_777',
+        ]);
+
+        // CRITICAL ASSERTION: A duplicate POST was NEVER executed!
+        $this->assertFalse($hasPostCalled, 'Duplicate POST appointment was executed on CRM calendar when it should have been reconciled!');
+    }
+
+    public function test_cancellation_auto_recovery_cancels_in_wess_even_if_mapping_table_empty(): void
+    {
+        // Ensure mapping table is empty (simulating post-uninstall / fresh state)
+        $this->assertEquals(0, SyncedAppointment::count());
+
+        $hasCancelCalled = false;
+        $cancelledCustomerId = null;
+
+        Http::fake([
+            'https://api.prelive.wessconnect.net/api/v1/online/customers/lookup/phone-number/*' => Http::response([
+                [
+                    'id'           => 4748191,
+                    'first_name'   => 'Sherry',
+                    'last_name'    => 'Test',
+                    'phone_mobile' => '81234567',
+                ],
+            ], 200),
+            'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments/28092284/cancel' => function ($request) use (&$hasCancelCalled, &$cancelledCustomerId) {
+                if ($request->method() === 'PATCH') {
+                    $hasCancelCalled = true;
+                    $cancelledCustomerId = $request->data()['customer_id'] ?? null;
+                }
+                return Http::response(['success' => true], 200);
+            },
+        ]);
+
+        // CRM sends cancellation webhook for an appointment created prior to uninstall
+        $response = $this->postJson('/api/webhooks/ghl', [
+            'type'        => 'AppointmentStatusUpdate',
+            'locationId'  => 'loc_test_sync',
+            'appointment' => [
+                'id'                => 'ghl_appt_old_28092284',
+                'appointmentStatus' => 'cancelled',
+                'notes'             => 'WESS Booking ID: 28092284',
+                'phone'             => '+6581234567',
+                'title'             => 'Sherry Test (WESS #28092284)',
+                'startTime'         => '2026-10-26T18:00:00+08:00',
+            ],
+        ]);
+
+        $response->assertStatus(200);
+
+        // Verify WESS cancel endpoint was called with correct appointment and customer ID
+        $this->assertTrue($hasCancelCalled, 'WESS cancel endpoint was not called for auto-recovered appointment!');
+        $this->assertEquals(4748191, $cancelledCustomerId, 'Customer ID was not resolved correctly for WESS cancellation!');
+
+        // Verify mapping was saved to synced_appointments marked as cancelled
+        $this->assertDatabaseHas('synced_appointments', [
+            'location_id'         => 'loc_test_sync',
+            'wess_appointment_id' => '28092284',
+            'ghl_appointment_id'  => 'ghl_appt_old_28092284',
+            'status'              => 'cancelled',
+        ]);
+    }
 }
 

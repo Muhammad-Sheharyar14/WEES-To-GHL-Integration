@@ -155,11 +155,11 @@ class CustomPageTest extends TestCase
 
         $response->assertStatus(200);
 
-        // Verify credentials, tokens, logs, and synced appointments were deleted
+        // Verify credentials, tokens, and logs were deleted, but synced_appointments is preserved to prevent duplicates on reconnect
         $this->assertDatabaseMissing('wess_configs', ['location_id' => 'loc_to_uninstall']);
         $this->assertDatabaseMissing('ghl_tokens', ['location_id' => 'loc_to_uninstall']);
         $this->assertDatabaseMissing('webhook_logs', ['location_id' => 'loc_to_uninstall']);
-        $this->assertDatabaseMissing('synced_appointments', ['location_id' => 'loc_to_uninstall']);
+        $this->assertDatabaseHas('synced_appointments', ['location_id' => 'loc_to_uninstall']);
     }
 
     public function test_save_credentials_saves_calendar_and_user_id(): void
