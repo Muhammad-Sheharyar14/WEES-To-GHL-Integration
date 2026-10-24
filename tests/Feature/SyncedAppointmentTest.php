@@ -465,5 +465,89 @@ class SyncedAppointmentTest extends TestCase
             'status'              => 'cancelled',
         ]);
     }
+
+    public function test_catch_up_sync_recovers_missed_appointments_from_paused_date_and_resets_pointer(): void
+    {
+        $pausedAt = now()->subDays(20);
+        $config = WessConfig::where('location_id', 'loc_test_sync')->first();
+        $config->update([
+            'is_sync_enabled' => true,
+            'sync_paused_at'  => $pausedAt,
+        ]);
+
+        $capturedDateFrom = null;
+
+        Http::fake([
+            'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => function ($request) use (&$capturedDateFrom, $pausedAt) {
+                // Extract query filter date_from from PSR-7 URI
+                $queryString = $request->toPsrRequest()->getUri()->getQuery();
+                parse_str($queryString, $query);
+                if (empty($capturedDateFrom) && !empty($query['filter']['date_from'])) {
+                    $capturedDateFrom = $query['filter']['date_from'];
+                }
+
+                return Http::response([
+                    'data' => [
+                        [
+                            'id'              => 9901,
+                            'date'            => $pausedAt->copy()->addDays(2)->toIso8601String(),
+                            'status'          => 'confirmed',
+                            'processing_time' => 60,
+                            'service_name'    => 'Facial Treatment',
+                            'customer'        => [
+                                'first_name'   => 'Recovered',
+                                'last_name'    => 'Client',
+                                'phone_mobile' => '+6581234567',
+                                'email'        => 'recovered@example.com',
+                            ],
+                            'employees'       => [],
+                        ],
+                    ],
+                ], 200);
+            },
+            'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
+                'contact' => ['id' => 'cnt_recovered_1']
+            ], 200),
+            'https://services.leadconnectorhq.com/calendars/events/appointments' => Http::response([
+                'id'         => 'ghl_recovered_event_9901',
+                'calendarId' => 'cal_wess_123',
+                'status'     => 'confirmed',
+            ], 200),
+            'https://services.leadconnectorhq.com/calendars/events*' => Http::response([
+                'events' => []
+            ], 200),
+            'https://services.leadconnectorhq.com/users*' => Http::response([
+                'users' => []
+            ], 200),
+            'https://services.leadconnectorhq.com/contacts/*' => Http::response([
+                'contact' => ['id' => 'cnt_recovered_1']
+            ], 200),
+            'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
+                'customFields' => []
+            ], 200),
+        ]);
+
+        $service = app(WessSyncService::class);
+        $result = $service->syncLocation($config);
+
+        $this->assertEquals('success', $result['status']);
+        $this->assertEquals(1, $result['synced_count']);
+
+        // Verify that the query started from the paused date, not today!
+        $this->assertNotNull($capturedDateFrom);
+        $this->assertEquals($pausedAt->startOfDay()->format('Y-m-d H:i:s'), $capturedDateFrom);
+
+        // Verify that the recovered appointment was synced to database
+        $this->assertDatabaseHas('synced_appointments', [
+            'location_id'         => 'loc_test_sync',
+            'wess_appointment_id' => '9901',
+            'ghl_appointment_id'  => 'ghl_recovered_event_9901',
+        ]);
+
+        // Verify that sync_paused_at was reset to null after catch-up completed
+        $freshConfig = WessConfig::where('location_id', 'loc_test_sync')->first();
+        $this->assertNull($freshConfig->sync_paused_at, 'sync_paused_at should be reset to null after catch-up completes!');
+        $this->assertNotNull($freshConfig->last_synced_at);
+    }
 }
 

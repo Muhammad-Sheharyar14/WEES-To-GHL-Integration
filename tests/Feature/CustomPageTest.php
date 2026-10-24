@@ -80,6 +80,20 @@ class CustomPageTest extends TestCase
             'location_id'     => 'loc_ghl_999',
             'is_sync_enabled' => false,
         ]);
+
+        $pausedConfig = WessConfig::where('location_id', 'loc_ghl_999')->first();
+        $this->assertNotNull($pausedConfig->sync_paused_at, 'sync_paused_at should be recorded when sync is toggled off!');
+
+        // Resume sync: sync_paused_at should be preserved for catch-up recovery
+        $resumeResponse = $this->postJson('/api/custom-page/toggle-sync', [
+            'locationId'      => 'loc_ghl_999',
+            'is_sync_enabled' => true,
+        ]);
+
+        $resumeResponse->assertStatus(200);
+        $resumedConfig = WessConfig::where('location_id', 'loc_ghl_999')->first();
+        $this->assertTrue($resumedConfig->is_sync_enabled);
+        $this->assertNotNull($resumedConfig->sync_paused_at, 'sync_paused_at must be preserved when toggled on to allow catch-up sync!');
     }
 
     public function test_get_logs_endpoint_paginates_10_per_page(): void
@@ -274,4 +288,130 @@ class CustomPageTest extends TestCase
                 'retry_after'     => 30,
             ]);
     }
+
+    public function test_retry_log_successfully_retries_failed_appointment_webhook(): void
+    {
+        $locationId = 'loc_retry_test';
+        WessConfig::create([
+            'location_id'     => $locationId,
+            'api_token'       => 'test_token',
+            'base_url'        => 'https://api.wessconnect.com/api/v1/online',
+            'branch_id'       => 1,
+            'is_sync_enabled' => true,
+        ]);
+
+        $log = WebhookLog::create([
+            'source'          => 'ghl_webhook',
+            'location_id'     => $locationId,
+            'event_type'      => 'AppointmentCreate',
+            'endpoint'        => 'https://api.wessconnect.com/api/v1/online/branches/1/appointments',
+            'method'          => 'POST',
+            'payload'         => [
+                'type'        => 'AppointmentCreate',
+                'locationId'  => $locationId,
+                'appointment' => [
+                    'id'                => 'ghl_appt_retry_101',
+                    'contactId'         => 'contact_retry_101',
+                    'phone'             => '+6581234567',
+                    'firstName'         => 'Sherry',
+                    'lastName'          => 'Retry',
+                    'startTime'         => '2026-11-01T10:00:00+08:00',
+                    'endTime'           => '2026-11-01T11:00:00+08:00',
+                    'title'             => 'Haircut Service',
+                    'appointmentStatus' => 'confirmed',
+                ],
+            ],
+            'response_status' => 200,
+            'response_body'   => json_encode(['status' => 'error', 'message' => 'Temporary API timeout on prior attempt']),
+            'error_message'   => 'Temporary API timeout on prior attempt',
+        ]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'https://services.leadconnectorhq.com/contacts/*' => \Illuminate\Support\Facades\Http::response([
+                'contact' => [
+                    'id'    => 'contact_retry_101',
+                    'name'  => 'Sherry Retry',
+                    'phone' => '+6581234567',
+                ]
+            ], 200),
+            'https://api.wessconnect.com/api/v1/online/customers/lookup/phone-number/*' => \Illuminate\Support\Facades\Http::response([
+                [
+                    'id'         => 4748191,
+                    'first_name' => 'Sherry',
+                    'last_name'  => 'Retry',
+                ],
+            ], 200),
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments/services' => \Illuminate\Support\Facades\Http::response([
+                'data' => [
+                    [
+                        'id'   => 329401,
+                        'code' => 'S01007',
+                        'name' => 'MC Generic Service',
+                    ],
+                ],
+            ], 200),
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments' => \Illuminate\Support\Facades\Http::response([
+                'data' => [
+                    'id'     => 99887766,
+                    'status' => 'Confirmed',
+                ],
+            ], 200),
+        ]);
+
+        $response = $this->postJson('/api/custom-page/retry-log', [
+            'log_id'     => $log->id,
+            'locationId' => $locationId,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+            ]);
+
+        $log->refresh();
+        $this->assertNull($log->error_message);
+        $this->assertDatabaseHas('synced_appointments', [
+            'location_id'         => $locationId,
+            'ghl_appointment_id'  => 'ghl_appt_retry_101',
+            'wess_appointment_id' => '99887766',
+        ]);
+    }
+
+    public function test_retry_log_rejects_non_appointment_or_empty_payload(): void
+    {
+        $log = WebhookLog::create([
+            'source'          => 'ghl_webhook',
+            'location_id'     => 'loc_reject_test',
+            'event_type'      => 'ContactDelete',
+            'endpoint'        => 'https://api.example.com',
+            'method'          => 'POST',
+            'payload'         => ['id' => '123'],
+            'response_status' => 200,
+        ]);
+
+        $response = $this->postJson('/api/custom-page/retry-log', [
+            'log_id'     => $log->id,
+            'locationId' => 'loc_reject_test',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Only appointment webhooks with valid payload can be retried.',
+            ]);
+    }
+
+    public function test_retry_log_validates_required_log_id(): void
+    {
+        $response = $this->postJson('/api/custom-page/retry-log', [
+            'locationId' => 'loc_any',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Log ID is required for retry.',
+            ]);
+    }
 }
+

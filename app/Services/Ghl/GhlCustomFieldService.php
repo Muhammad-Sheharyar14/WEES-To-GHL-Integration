@@ -45,33 +45,86 @@ class GhlCustomFieldService
     }
 
     /**
-     * Get or create the required custom fields ('WESS Code' and 'Last Visit') for a GHL location
+     * Supported custom field definitions with aliases and metadata
+     */
+    protected array $fieldDefinitions = [
+        'wess_code' => [
+            'name'        => 'WESS Code',
+            'dataType'    => 'TEXT',
+            'placeholder' => 'WESS Customer / Member ID',
+            'aliases'     => ['wess code', 'wess customer code', 'wess customer id', 'wess id', 'code'],
+        ],
+        'last_visit' => [
+            'name'        => 'Last Visit',
+            'dataType'    => 'TEXT',
+            'placeholder' => 'Date of last salon / spa visit',
+            'aliases'     => ['last visit', 'wess last visit', 'last visit date'],
+        ],
+        'salutation' => [
+            'name'        => 'Salutation',
+            'dataType'    => 'TEXT',
+            'placeholder' => 'Mr, Mrs, Ms, Miss, Dr',
+            'aliases'     => ['salutation', 'title', 'wess salutation'],
+        ],
+        'gender' => [
+            'name'        => 'Gender',
+            'dataType'    => 'TEXT',
+            'placeholder' => 'M / F / Male / Female',
+            'aliases'     => ['gender', 'sex', 'wess gender'],
+        ],
+        'nric' => [
+            'name'        => 'NRIC',
+            'dataType'    => 'TEXT',
+            'placeholder' => 'NRIC / Passport / ID Number',
+            'aliases'     => ['nric', 'ic no', 'ic_no', 'nric/fin', 'fin', 'id number'],
+        ],
+        'contact_type' => [
+            'name'        => 'Contact Type',
+            'dataType'    => 'TEXT',
+            'placeholder' => 'Existing Member / New Lead',
+            'aliases'     => ['contact type', 'contact_type', 'customer type', 'client type'],
+        ],
+        'birthday_month' => [
+            'name'        => 'Birthday Month',
+            'dataType'    => 'TEXT',
+            'placeholder' => 'e.g. January, February, etc.',
+            'aliases'     => ['birthday month', 'birth month', 'bday month'],
+        ],
+        'preferred_name' => [
+            'name'        => 'Preferred Name',
+            'dataType'    => 'TEXT',
+            'placeholder' => 'Preferred Name / Nickname',
+            'aliases'     => ['preferred name', 'nickname', 'pref name'],
+        ],
+    ];
+
+    /**
+     * Get or create the required custom fields for a GHL location
      *
      * Flow:
      * 1. Check local cache to avoid duplicate API lookups.
-     * 2. Query GET /locations/{locationId}/customFields to check if fields exist.
-     * 3. If field exists, extract its UUID / ID.
-     * 4. If field does not exist, create it via POST /locations/{locationId}/customFields.
-     * 5. Cache and return the field IDs.
+     * 2. Query GET /locations/{locationId}/customFields to check which fields exist.
+     * 3. For any missing fields, create them via POST /locations/{locationId}/customFields.
+     * 4. Cache and return the field IDs.
      *
      * @param string $locationId
-     * @return array ['wess_code_id' => ?string, 'last_visit_id' => ?string]
+     * @return array Map of field keys to field IDs (e.g. 'wess_code_id' => string)
      */
     public function getOrCreateContactCustomFields(string $locationId): array
     {
         $cacheKey = "ghl_custom_fields_map_{$locationId}";
         $cached = Cache::get($cacheKey);
-        if ($cached && !empty($cached['wess_code_id']) && !empty($cached['last_visit_id'])) {
+        if ($cached && is_array($cached) && !empty($cached['wess_code_id']) && !empty($cached['last_visit_id'])) {
             return $cached;
         }
 
-        $wessCodeId  = $cached['wess_code_id'] ?? null;
-        $lastVisitId = $cached['last_visit_id'] ?? null;
+        $resolved = $cached ?? [];
 
         try {
             // 1. Fetch all existing custom fields for this location
             $res = $this->ghlRequest('GET', "locations/{$locationId}/customFields", $locationId);
 
+            $existingFields = [];
             if ($res->successful()) {
                 $customFields = $res->json('customFields') ?? $res->json() ?? [];
                 if (!is_array($customFields) && isset($customFields['customFields'])) {
@@ -82,66 +135,52 @@ class GhlCustomFieldService
                     if (!is_array($field)) continue;
                     $name    = strtolower(trim($field['name'] ?? ''));
                     $fieldId = $field['id'] ?? null;
-
-                    if (!$fieldId) continue;
-
-                    // Match 'WESS Code'
-                    if (in_array($name, ['wess code', 'wess customer code', 'wess customer id', 'wess id'])) {
-                        $wessCodeId = $fieldId;
-                    }
-
-                    // Match 'Last Visit'
-                    if (in_array($name, ['last visit', 'wess last visit', 'last visit date'])) {
-                        $lastVisitId = $fieldId;
+                    if ($fieldId && $name) {
+                        $existingFields[$name] = $fieldId;
                     }
                 }
             } else {
                 Log::warning("Could not list GHL custom fields for location {$locationId}: HTTP {$res->status()} - {$res->body()}");
             }
 
-            // 2. If 'WESS Code' does not exist in GHL, create it
-            if (!$wessCodeId) {
-                $createCodeRes = $this->ghlRequest('POST', "locations/{$locationId}/customFields", $locationId, [
-                    'name'        => 'WESS Code',
-                    'dataType'    => 'TEXT',
-                    'model'       => 'contact',
-                    'placeholder' => 'WESS Customer / Member ID',
-                ]);
+            // 2. Resolve or create each supported field
+            foreach ($this->fieldDefinitions as $key => $def) {
+                $idKey = "{$key}_id";
+                $fieldId = $resolved[$idKey] ?? null;
 
-                if ($createCodeRes->successful()) {
-                    $created = $createCodeRes->json('customField') ?? $createCodeRes->json();
-                    $wessCodeId = $created['id'] ?? null;
-                    Log::info("Successfully created GHL custom field 'WESS Code' (ID: {$wessCodeId}) for location {$locationId}");
-                } else {
-                    Log::warning("Failed to create GHL custom field 'WESS Code' for location {$locationId}: {$createCodeRes->body()}");
+                if (!$fieldId) {
+                    // Check if existing field matches any alias
+                    foreach ($def['aliases'] as $alias) {
+                        if (isset($existingFields[$alias])) {
+                            $fieldId = $existingFields[$alias];
+                            break;
+                        }
+                    }
                 }
+
+                // If not found in GHL, create it
+                if (!$fieldId) {
+                    $createRes = $this->ghlRequest('POST', "locations/{$locationId}/customFields", $locationId, [
+                        'name'        => $def['name'],
+                        'dataType'    => $def['dataType'],
+                        'model'       => 'contact',
+                        'placeholder' => $def['placeholder'],
+                    ]);
+
+                    if ($createRes->successful()) {
+                        $created = $createRes->json('customField') ?? $createRes->json();
+                        $fieldId = $created['id'] ?? null;
+                        Log::info("Successfully created GHL custom field '{$def['name']}' (ID: {$fieldId}) for location {$locationId}");
+                    } else {
+                        Log::warning("Failed to create GHL custom field '{$def['name']}' for location {$locationId}: {$createRes->body()}");
+                    }
+                }
+
+                $resolved[$idKey] = $fieldId;
             }
 
-            // 3. If 'Last Visit' does not exist in GHL, create it
-            if (!$lastVisitId) {
-                $createVisitRes = $this->ghlRequest('POST', "locations/{$locationId}/customFields", $locationId, [
-                    'name'        => 'Last Visit',
-                    'dataType'    => 'TEXT',
-                    'model'       => 'contact',
-                    'placeholder' => 'Date of last salon / spa visit',
-                ]);
-
-                if ($createVisitRes->successful()) {
-                    $created = $createVisitRes->json('customField') ?? $createVisitRes->json();
-                    $lastVisitId = $created['id'] ?? null;
-                    Log::info("Successfully created GHL custom field 'Last Visit' (ID: {$lastVisitId}) for location {$locationId}");
-                } else {
-                    Log::warning("Failed to create GHL custom field 'Last Visit' for location {$locationId}: {$createVisitRes->body()}");
-                }
-            }
-
-            $resolved = [
-                'wess_code_id'  => $wessCodeId,
-                'last_visit_id' => $lastVisitId,
-            ];
-
-            // Cache mapping for 24 hours
-            if ($wessCodeId || $lastVisitId) {
+            // Cache mapping for 24 hours if at least one core field was resolved
+            if (!empty($resolved['wess_code_id']) || !empty($resolved['last_visit_id'])) {
                 Cache::put($cacheKey, $resolved, now()->addDay());
             }
 
@@ -149,10 +188,7 @@ class GhlCustomFieldService
 
         } catch (Exception $e) {
             Log::error("Exception resolving custom fields for location {$locationId}: " . $e->getMessage());
-            return [
-                'wess_code_id'  => $wessCodeId,
-                'last_visit_id' => $lastVisitId,
-            ];
+            return $resolved;
         }
     }
 
@@ -163,9 +199,16 @@ class GhlCustomFieldService
      * @param string $contactId
      * @param string|null $wessCode
      * @param string|null $lastVisit
+     * @param array $additionalFields Optional map of extra fields: ['salutation' => '...', 'gender' => '...', 'nric' => '...', 'contact_type' => '...', 'birthday_month' => '...', 'preferred_name' => '...']
      * @return bool
      */
-    public function updateContactCustomFields(string $locationId, string $contactId, ?string $wessCode = null, ?string $lastVisit = null): bool
+    public function updateContactCustomFields(
+        string $locationId, 
+        string $contactId, 
+        ?string $wessCode = null, 
+        ?string $lastVisit = null,
+        array $additionalFields = []
+    ): bool
     {
         if (empty($locationId) || empty($contactId)) {
             return false;
@@ -174,6 +217,7 @@ class GhlCustomFieldService
         $fields = $this->getOrCreateContactCustomFields($locationId);
         $customFieldsPayload = [];
 
+        // 1. Core WESS Code
         if (!empty($wessCode) && !empty($fields['wess_code_id'])) {
             $customFieldsPayload[] = [
                 'id'          => $fields['wess_code_id'],
@@ -182,12 +226,30 @@ class GhlCustomFieldService
             ];
         }
 
+        // 2. Core Last Visit
         if (!empty($lastVisit) && !empty($fields['last_visit_id'])) {
             $customFieldsPayload[] = [
                 'id'          => $fields['last_visit_id'],
                 'field_value' => (string)$lastVisit,
                 'value'       => (string)$lastVisit,
             ];
+        }
+
+        // 3. Additional custom fields (Salutation, Gender, NRIC, Contact Type, Birthday Month, Preferred Name)
+        foreach ($additionalFields as $key => $val) {
+            if ($val === null || $val === '') {
+                continue;
+            }
+            $cleanKey = strtolower(str_replace([' ', '-'], '_', $key));
+            $idKey    = "{$cleanKey}_id";
+
+            if (!empty($fields[$idKey])) {
+                $customFieldsPayload[] = [
+                    'id'          => $fields[$idKey],
+                    'field_value' => (string)$val,
+                    'value'       => (string)$val,
+                ];
+            }
         }
 
         if (empty($customFieldsPayload)) {
@@ -208,8 +270,9 @@ class GhlCustomFieldService
                 Cache::put("wess_origin_contact_{$contactId}", true, now()->addSeconds(45));
 
                 Log::info("Successfully updated GHL contact {$contactId} with custom fields", [
-                    'wess_code'  => $wessCode,
-                    'last_visit' => $lastVisit,
+                    'wess_code'         => $wessCode,
+                    'last_visit'        => $lastVisit,
+                    'additional_fields' => array_keys($additionalFields),
                 ]);
             }
 

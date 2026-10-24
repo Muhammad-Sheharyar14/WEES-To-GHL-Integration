@@ -318,6 +318,15 @@ class CustomPageController extends Controller
             $config->company_id = $companyId;
         }
         $config->is_sync_enabled = $enabled;
+
+        // When toggling OFF, record the exact timestamp sync stopped
+        if (!$enabled) {
+            if (!$config->sync_paused_at) {
+                $config->sync_paused_at = now();
+            }
+        }
+        // When toggling ON, keep sync_paused_at intact so the upcoming sync executes catch-up recovery
+
         $config->save();
 
         return response()->json([
@@ -375,6 +384,19 @@ class CustomPageController extends Controller
                 $displayEndpoint = preg_replace('#^https?://services\.leadconnectorhq\.com#i', '', $displayEndpoint);
             }
 
+            $isAppointment = str_contains(strtolower((string) $log->event_type), 'appointment');
+            $hasError = !empty($log->error_message) 
+                || !in_array($log->response_status, [200, 201])
+                || str_contains((string) $log->response_body, '"status":"error"')
+                || str_contains((string) $log->response_body, '"status":"failed"');
+
+            $isSuccess = in_array($log->response_status, [200, 201]) 
+                && empty($log->error_message) 
+                && !str_contains((string) $log->response_body, '"status":"error"') 
+                && !str_contains((string) $log->response_body, '"status":"failed"');
+
+            $canRetry = $isAppointment && $hasError && !empty($log->payload);
+
             return [
                 'id'               => $log->id,
                 'source'           => $log->source,
@@ -383,7 +405,9 @@ class CustomPageController extends Controller
                 'display_endpoint' => $displayEndpoint ?: '—',
                 'method'           => strtoupper((string) ($log->method ?: 'POST')),
                 'response_status'  => $log->response_status,
-                'is_success'       => in_array($log->response_status, [200, 201]) && empty($log->error_message),
+                'is_success'       => $isSuccess,
+                'is_appointment'   => $isAppointment,
+                'can_retry'        => $canRetry,
                 'payload'          => $log->payload,
                 'response_body'    => $log->response_body,
                 'error_message'    => $log->error_message,
@@ -404,5 +428,98 @@ class CustomPageController extends Controller
                 'data'         => $items,
             ],
         ]);
+    }
+
+    /**
+     * Manually retry syncing an appointment webhook event to WESS
+     */
+    public function retryLog(Request $request)
+    {
+        $logId      = $request->input('log_id') ?: $request->input('id');
+        $locationId = $request->input('locationId') ?: $request->input('location_id');
+
+        if (empty($logId)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Log ID is required for retry.',
+            ], 422);
+        }
+
+        $log = WebhookLog::find($logId);
+        if (!$log) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Log entry not found.',
+            ], 404);
+        }
+
+        if (!empty($locationId) && $log->location_id && $log->location_id !== $locationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized account context for this log entry.',
+            ], 403);
+        }
+
+        $resolvedLocationId = $log->location_id ?: $locationId;
+        $isAppointment = str_contains(strtolower((string) $log->event_type), 'appointment');
+
+        if (!$isAppointment || empty($log->payload)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only appointment webhooks with valid payload can be retried.',
+            ], 422);
+        }
+
+        try {
+            // Clear prior error state before retrying
+            $log->update([
+                'error_message' => null,
+            ]);
+
+            $webhookController = app(GhlWebhookController::class);
+            $normalizedType = strtolower(str_replace(['_', '-'], '', (string)$log->event_type));
+
+            $webhookController->handleAppointmentWebhook(
+                $resolvedLocationId,
+                $normalizedType,
+                $log->payload,
+                $log
+            );
+
+            $log->refresh();
+
+            $isFailed = !empty($log->error_message) 
+                || !in_array($log->response_status, [200, 201])
+                || str_contains((string) $log->response_body, '"status":"error"')
+                || str_contains((string) $log->response_body, '"status":"failed"');
+
+            if ($isFailed) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Retry attempted but failed: ' . ($log->error_message ?: 'Check response details.'),
+                    'log'     => $log,
+                ]);
+            }
+
+            // Extract success message from response body if possible
+            $respData = json_decode((string)$log->response_body, true);
+            $msg = $respData['message'] ?? 'Appointment synced to WESS successfully.';
+
+            return response()->json([
+                'success' => true,
+                'message' => $msg,
+                'log'     => $log,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("Manual retry failed for log #{$logId}: " . $e->getMessage());
+            $log->update([
+                'error_message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Retry failed: ' . $e->getMessage(),
+            ], 200);
+        }
     }
 }

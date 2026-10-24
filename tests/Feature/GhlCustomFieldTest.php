@@ -34,18 +34,14 @@ class GhlCustomFieldTest extends TestCase
         Http::fake([
             "https://services.leadconnectorhq.com/locations/{$locationId}/customFields" => Http::response([
                 'customFields' => [
-                    [
-                        'id'       => 'field_wess_code_999',
-                        'name'     => 'WESS Code',
-                        'dataType' => 'TEXT',
-                        'model'    => 'contact',
-                    ],
-                    [
-                        'id'       => 'field_last_visit_888',
-                        'name'     => 'Last Visit',
-                        'dataType' => 'TEXT',
-                        'model'    => 'contact',
-                    ],
+                    ['id' => 'field_wess_code_999', 'name' => 'WESS Code'],
+                    ['id' => 'field_last_visit_888', 'name' => 'Last Visit'],
+                    ['id' => 'field_salutation_777', 'name' => 'Salutation'],
+                    ['id' => 'field_gender_666', 'name' => 'Gender'],
+                    ['id' => 'field_nric_555', 'name' => 'NRIC'],
+                    ['id' => 'field_contact_type_444', 'name' => 'Contact Type'],
+                    ['id' => 'field_bday_month_333', 'name' => 'Birthday Month'],
+                    ['id' => 'field_pref_name_222', 'name' => 'Preferred Name'],
                 ]
             ], 200),
         ]);
@@ -55,6 +51,12 @@ class GhlCustomFieldTest extends TestCase
 
         $this->assertEquals('field_wess_code_999', $fields['wess_code_id']);
         $this->assertEquals('field_last_visit_888', $fields['last_visit_id']);
+        $this->assertEquals('field_salutation_777', $fields['salutation_id']);
+        $this->assertEquals('field_gender_666', $fields['gender_id']);
+        $this->assertEquals('field_nric_555', $fields['nric_id']);
+        $this->assertEquals('field_contact_type_444', $fields['contact_type_id']);
+        $this->assertEquals('field_bday_month_333', $fields['birthday_month_id']);
+        $this->assertEquals('field_pref_name_222', $fields['preferred_name_id']);
 
         // Verify no POST requests to create new fields were made
         Http::assertSentCount(1);
@@ -81,13 +83,8 @@ class GhlCustomFieldTest extends TestCase
                 // POST creates
                 $data = $request->data();
                 $name = $data['name'] ?? '';
-                if ($name === 'WESS Code') {
-                    return Http::response(['customField' => ['id' => 'new_id_wess_code', 'name' => 'WESS Code']], 201);
-                }
-                if ($name === 'Last Visit') {
-                    return Http::response(['customField' => ['id' => 'new_id_last_visit', 'name' => 'Last Visit']], 201);
-                }
-                return Http::response([], 400);
+                $clean = strtolower(str_replace(' ', '_', $name));
+                return Http::response(['customField' => ['id' => "new_id_{$clean}", 'name' => $name]], 201);
             },
         ]);
 
@@ -96,6 +93,12 @@ class GhlCustomFieldTest extends TestCase
 
         $this->assertEquals('new_id_wess_code', $fields['wess_code_id']);
         $this->assertEquals('new_id_last_visit', $fields['last_visit_id']);
+        $this->assertEquals('new_id_salutation', $fields['salutation_id']);
+        $this->assertEquals('new_id_gender', $fields['gender_id']);
+        $this->assertEquals('new_id_nric', $fields['nric_id']);
+        $this->assertEquals('new_id_contact_type', $fields['contact_type_id']);
+        $this->assertEquals('new_id_birthday_month', $fields['birthday_month_id']);
+        $this->assertEquals('new_id_preferred_name', $fields['preferred_name_id']);
 
         // Next call should use cache and not hit HTTP
         $cachedFields = $service->getOrCreateContactCustomFields($locationId);
@@ -121,6 +124,12 @@ class GhlCustomFieldTest extends TestCase
                 'customFields' => [
                     ['id' => 'cf_wess_111', 'name' => 'WESS Code'],
                     ['id' => 'cf_visit_222', 'name' => 'Last Visit'],
+                    ['id' => 'cf_salut_333', 'name' => 'Salutation'],
+                    ['id' => 'cf_gend_444', 'name' => 'Gender'],
+                    ['id' => 'cf_nric_555', 'name' => 'NRIC'],
+                    ['id' => 'cf_ctype_666', 'name' => 'Contact Type'],
+                    ['id' => 'cf_bmonth_777', 'name' => 'Birthday Month'],
+                    ['id' => 'cf_pname_888', 'name' => 'Preferred Name'],
                 ]
             ], 200),
             "https://services.leadconnectorhq.com/contacts/{$contactId}" => Http::response([
@@ -130,7 +139,20 @@ class GhlCustomFieldTest extends TestCase
         ]);
 
         $service = app(GhlCustomFieldService::class);
-        $result = $service->updateContactCustomFields($locationId, $contactId, 'WESS-CLIENT-007', '2026-10-09');
+        $result = $service->updateContactCustomFields(
+            $locationId, 
+            $contactId, 
+            'WESS-CLIENT-007', 
+            '2026-10-09',
+            [
+                'salutation'     => 'Ms',
+                'gender'         => 'F',
+                'nric'           => 'S1234567A',
+                'contact_type'   => 'Existing Member',
+                'birthday_month' => 'October',
+                'preferred_name' => 'Sherry',
+            ]
+        );
 
         $this->assertTrue($result);
 
@@ -138,7 +160,8 @@ class GhlCustomFieldTest extends TestCase
             if ($request->url() === "https://services.leadconnectorhq.com/contacts/{$contactId}" && $request->method() === 'PUT') {
                 $payload = $request->data();
                 $customFields = $payload['customFields'] ?? [];
-                return count($customFields) === 2
+                // 2 core + 6 additional = 8 custom fields
+                return count($customFields) === 8
                     && $customFields[0]['id'] === 'cf_wess_111'
                     && $customFields[0]['field_value'] === 'WESS-CLIENT-007'
                     && $customFields[1]['id'] === 'cf_visit_222'

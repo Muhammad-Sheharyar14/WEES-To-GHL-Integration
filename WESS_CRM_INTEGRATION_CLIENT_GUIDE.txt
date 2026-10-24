@@ -1,0 +1,214 @@
+WESS TO MINICHAT X INTEGRATION: COMPLETE CLIENT SYSTEM & FEATURE GUIDE
+
+Document Version: 1.0
+Target Audience: Client Operations, Salon Management, and Technical Administration
+Platform: WESS Salon Management System & MiniChat X CRM
+Reference Document: Official WESS Online API Specification Reference (v1.0.0)
+
+
+Heading 1: Executive Overview
+
+This system provides automated two-way synchronization between your WESS salon desktop software and your MiniChat X CRM. 
+
+The integration ensures that your front desk, therapists, and marketing operations stay fully aligned:
+1. Customer profiles and member IDs are recognized across both platforms.
+2. Appointments booked or shifted in MiniChat X are automatically updated in WESS.
+3. Appointments scheduled in WESS are reflected on therapist calendars in MiniChat X.
+4. Operational controls like the Master Switch prevent accidental sync interruptions during maintenance or clinic operational reviews.
+
+[SCREENSHOT: MiniChat X Integration Portal page showing the Master Sync Switch toggle, connected branch details, and sync status]
+
+
+Heading 1: Feature 1 - Master Sync Switch & Automatic Gap Recovery
+
+The Master Switch gives you complete control over whether data synchronizes between MiniChat X and WESS.
+
+Heading 2: How the Master Switch Works
+- The switch is located directly on your Integration Portal settings page.
+- When turned ON: Both WESS-to-CRM sync and CRM-to-WESS booking updates operate automatically.
+- When turned OFF: All background synchronization pauses immediately. Any incoming appointment requests from the CRM are safely held without touching your WESS appointment book.
+
+Heading 2: Automatic Catch-Up Sync (Gap Recovery)
+A common challenge in clinic operations occurs when the integration is paused for several days or weeks (for example, during salon renovations, system audits, or holiday closures). 
+
+To ensure zero appointments are ever missed:
+1. The moment the Master Switch is turned OFF, the system records the exact date and time it was paused.
+2. When the Master Switch is turned back ON (whether 2 days or 3 weeks later), the integration automatically triggers an intelligent Catch-Up Sync.
+3. It syncs all appointments that occurred or were booked during the entire downtime period, up to the next 30 days.
+4. Because the WESS API enforces a strict 30-day query limit, the integration automatically breaks the downtime into consecutive 30-day windows and merges all records seamlessly.
+5. Once all missed appointments are recovered into MiniChat X, the system smoothly returns to standard rolling daily sync.
+
+Heading 2: Source of Truth & Sync Priority on Re-Enabling
+- Single Source of Truth: WESS is the authoritative, definitive Single Source of Truth for all clinic appointments, room allocations, therapist rosters, and client bookings.
+- Sync Priority (WESS to CRM): When the Master Switch is turned OFF and later re-enabled (turned back ON), the synchronization priority is strictly WESS to CRM.
+- Why WESS Takes Priority: While the Master Switch was paused, your front desk staff and clients may have scheduled direct telephone appointments, walk-in visits, or in-clinic slot changes directly inside the WESS desktop software. When the switch is turned back on, WESS data takes precedence during the Catch-Up Sync so that MiniChat X therapist calendars are immediately refreshed with the true, physical state of your salon schedule without any conflicts.
+
+[SCREENSHOT: Integration Portal showing the Master Sync Switch toggled ON with 'Active Sync' status label]
+
+
+Heading 1: Feature 2 - WESS to MiniChat X Appointment Sync
+
+Heading 2: How Appointments Flow from WESS to MiniChat X
+When clients book appointments directly with your clinic front desk or over the phone in WESS:
+1. The integration queries WESS for all active appointments across your branch.
+2. It matches each WESS appointment to the corresponding customer in MiniChat X using their mobile phone number.
+3. It checks which therapist is assigned in WESS and routes the appointment directly to that specific therapist's personal calendar in MiniChat X.
+4. The slot is automatically reserved and blocked on MiniChat X so that no double-booking can happen.
+
+Heading 2: Sync Speed & Reflection Time
+- Automated Background Synchronization: Runs on an automated recurring schedule in the background every 30 minutes (via the system scheduler). Any appointment entered or updated in WESS will automatically appear on the therapist's calendar in MiniChat X on the next scheduled 30-minute cycle.
+- Hands-Free Operation: Synchronization is completely automated on the server. Clinic staff do not need to press any sync buttons or perform manual data exports; appointments flow seamlessly in the background.
+
+[SCREENSHOT: MiniChat X Calendar View showing an appointment synced from WESS assigned to a specific therapist's calendar]
+
+
+Heading 1: Feature 3 - MiniChat X to WESS Booking & Rescheduling
+
+Heading 2: Real-Time Instant Booking
+When an appointment is created in MiniChat X (for example, via online chat, website widget, or staff booking):
+- Speed: Instant (1 to 3 seconds via real-time webhook).
+- The integration looks up the customer in WESS by mobile phone number (+65 Singapore standard format).
+- If the customer exists in WESS, the booking is linked to their existing WESS member profile.
+- If the customer is new, a WESS profile is registered, and the booking is created under their new account.
+- The therapist assigned in MiniChat X is automatically matched to the corresponding staff member in WESS, and the appointment appears in the WESS Appointment Book under 'Request' status.
+
+Heading 2: How Rescheduling / Shifting Works
+When staff move or reschedule an appointment on the MiniChat X calendar:
+1. The integration receives the new date and time instantly.
+2. It verifies that the schedule has changed.
+3. Because of WESS API architecture (explained below), the integration automatically cancels the prior slot in WESS and books the new slot at the updated time and therapist.
+4. The old slot in WESS is marked as cancelled, freeing up the therapist's time, while the new slot is booked immediately.
+
+[SCREENSHOT: WESS Appointment Book showing an active booking in white ('Request') and a rescheduled slot in peach ('Last Minute Cancel')]
+
+
+Heading 1: Feature 4 - Customer Profile & Custom Fields Synchronization
+
+Whenever a customer is booked or synced, the integration enriches their contact profile in MiniChat X with live operational data from WESS.
+
+Heading 2: Fields Synchronized Automatically into MiniChat X
+1. WESS Member Code: The official customer ID code in WESS (e.g. C006071).
+2. Last Visit Date: The date the customer last received a treatment or attended an appointment.
+3. Salutation: Title (e.g. Mr, Mrs, Ms, Miss, Dr) from WESS.
+4. Gender: M or F from WESS customer details.
+5. NRIC / ID: Identity card or passport number recorded in WESS.
+6. Contact Type: Automatically classified as 'Existing Member' if found in WESS, or 'New Lead' if new.
+7. Preferred Name: Customer's preferred or first name.
+8. Birthday Month: Calculated automatically (e.g. 'October') whenever date of birth is present.
+
+[SCREENSHOT: MiniChat X Contact Details panel showing the custom fields populated: WESS Code, Last Visit, Contact Type, NRIC, Gender]
+
+
+Heading 1: System Limitations & Architectural Facts (With WESS API Documentation Proofs)
+
+To maintain complete transparency and technical accuracy, the following operational limitations exist due to the design and security policies of the official WESS Online API.
+
+Heading 2: Limitation 1 - Customer Profiles Cannot Be Updated Over API
+
+What happens in practice:
+If you edit a customer's name, email, or phone number in MiniChat X (for example, changing 'Sherry' to 'Sherry1'), this change does NOT overwrite the customer's name inside WESS.
+
+Why this happens:
+The WESS Online API is strictly read-only for existing customer profiles. It does NOT offer any endpoint to update or modify customer records.
+
+Official API Documentation Reference:
+- Document: WESS Online API Specification Reference (v1.0.0), Page 2, 'Endpoint Summary Table'.
+- Endpoints Supported for Customers:
+  - GET api/v1/online/customers/lookup/phone-number/{phoneNumber} (Lookup by phone)
+  - GET api/v1/online/branches/{branch}/customers (List customers)
+  - POST api/v1/online/branches/{branch}/customers (Register / create new customer)
+  - GET api/v1/online/branches/{branch}/customers/{customer} (Get profile details)
+- Endpoints NOT Supported:
+  - PUT or PATCH api/v1/online/branches/{branch}/customers/{customer} DOES NOT EXIST.
+- Live API Proof:
+  Sending a PUT or PATCH request to update customer details returns:
+  HTTP 405 Method Not Allowed - 'The PATCH/PUT method is not supported for route api/v1/online/branches/{branch}/customers/{id}. Supported methods: GET, HEAD.'
+
+Operational Recommendation:
+This security policy is enforced by WESS HQ to prevent third-party integrations from accidentally corrupting salon membership databases. If a customer legally changes their name or contact details, salon receptionists should update the primary record directly inside the WESS desktop software.
+
+
+Heading 2: Limitation 2 - Appointments Cannot Be Directly Updated (Cancelled & Rebooked Instead)
+
+What happens in practice:
+When an appointment time or therapist is changed in MiniChat X, the previous appointment in WESS is cancelled (status changes to 'Last Minute Cancel' or 'Cancel'), and a new appointment ticket is booked for the new time.
+
+Why this happens:
+The official WESS Online API does NOT provide any appointment modification or edit endpoint. 
+
+Official API Documentation Reference:
+- Document: WESS Online API Specification Reference (v1.0.0), Page 2 & Section 4.5 - 4.6.
+- Endpoints Supported for Appointments:
+  - POST api/v1/online/branches/{branch}/appointments (Book / create online appointment)
+  - PATCH api/v1/online/branches/{branch}/appointments/{saleTicket}/cancel (Cancel existing appointment)
+  - GET api/v1/online/branches/{branch}/appointments (List online appointments)
+- Endpoints NOT Supported:
+  - PUT or PATCH api/v1/online/branches/{branch}/appointments/{saleTicket} DOES NOT EXIST.
+
+Operational Behavior in WESS Desktop Software:
+- On the WESS desktop Appointment Book, cancelled appointments are displayed in a soft peach/pink box labelled 'Last Minute Cancel' so clinic staff have a complete audit history of slot changes.
+- The newly scheduled slot is simultaneously displayed in a clean white box labelled 'Request'.
+- This guarantees that therapist schedules remain 100% accurate without leaving ghost bookings in old time slots.
+
+
+Heading 2: Limitation 3 - Certain Personal Fields Are Masked by WESS (Singapore PDPA Compliance)
+
+What happens in practice:
+Certain demographic fields (Exact Date of Birth, Race, Religion, Nationality, Marital Status) cannot be pulled from WESS into MiniChat X over the API.
+
+Why this happens:
+Under the Singapore Personal Data Protection Act (PDPA) guidelines and WESS API security protocols, customer date of birth and sensitive demographic markers are classified as restricted personal data. The WESS Online API automatically masks these fields as null.
+
+Official API Documentation Reference:
+- Document: WESS Online API Specification Reference (v1.0.0), Section 3.2, Customer Profile Response Schema.
+- Fields explicitly masked as null: birthday, race, religion, nationality, marital_status.
+
+Operational Recommendation:
+- If date of birth or demographic data is needed for marketing campaigns or birthday vouchers, collect it directly through intake forms, chat conversations, or client consultation surveys in MiniChat X.
+- When entered in MiniChat X, our integration automatically calculates the 'Birthday Month' custom field for convenient promotional segmentation.
+
+
+Heading 2: Limitation 4 - WESS API Rate Limit (60 Requests Per Minute)
+
+WESS enforces a strict throttle limit of 60 requests per minute per API token. 
+
+How our integration handles this:
+- Intelligent Debouncing: The system groups appointment syncs and caches therapist calendars to minimize redundant calls.
+- Throttling Protection: If the rate limit is approached during large batch syncs, the integration automatically pauses briefly and retries with exponential backoff, preventing request drops or API lockouts.
+
+
+Heading 1: Feature 5 - Activity Logs & Manual Sync Retry
+
+Heading 2: Real-Time Activity & Webhook Logs
+Clinic managers, operations teams, and administrative staff can review integration activity at any time directly inside the Integration Portal's 'Activity Logs' tab (as well as on the live monitoring dashboard at https://wess.apidevx.com/logs):
+- Real-Time Audit Trail: Every appointment creation, appointment update/shift, customer lookup, and cancellation triggered from MiniChat X is logged in real time.
+- Complete Payload & Response Transparency: Each log records the exact event type, timestamp, CRM payload details, the target WESS API endpoint, and the full response body.
+- Clear Visual Status: Successful sync operations are marked with a green 'Success' badge, while skipped or loop-prevented requests are clearly annotated.
+- Search & Filter: Filter by 'CRM Webhooks' or 'WESS Sync', or search by customer name, phone number, or booking ID.
+
+Heading 2: One-Click Manual Retry for Failed Appointment Syncs
+If an appointment event (whether an Appointment Create or an Appointment Update / Reschedule) encounters an unexpected issue when pushing from MiniChat X to WESS (for example, due to a temporary WESS API rate limit, a brief internet glitch, or a transient salon system delay):
+1. Visual Error Indication: The Activity Logs row clearly highlights the error message and displays an amber failure status.
+2. Direct Table-Row Retry: A dedicated 'Retry Sync' button automatically appears right next to 'View' in that log's row.
+3. Modal Popup Retry: Staff can also click 'View' to inspect the full technical request and response, and click the 'Retry Sync to WESS' button located at the bottom of the details window.
+4. Instant Re-Execution: When clicked, the integration immediately re-runs the synchronization with WESS using the stored payload. It re-verifies the customer, matches the therapist calendar, and creates or reschedules the booking in WESS.
+5. No Re-Typing Required: Clinic staff never need to delete, recreate, or re-type customer appointments in MiniChat X. With a single click of the 'Retry' button, the sync is re-attempted and the log status updates to green 'Success' upon completion.
+
+[SCREENSHOT: Integration Portal Activity Logs tab showing an appointment webhook error entry with the amber 'Retry Sync' button, and the details popup with 'Retry Sync to WESS']
+
+
+Heading 1: Summary of Operational Best Practices for Staff
+
+1. For Routine Bookings & Rescheduling:
+   - Staff can freely book or reschedule appointments on MiniChat X.
+   - The integration immediately updates WESS, cancels previous slots if shifted, and books the new slot.
+2. For Customer Profile Updates:
+   - Edit customer names or phone numbers directly inside desktop WESS, as WESS API policy prevents third-party software from editing existing salon member profiles.
+3. When Using the Master Switch (Maintenance or System Audits):
+   - Turn the Master Switch OFF on the Integration Portal to safely pause synchronization.
+   - WESS as Single Source of Truth: Remember that WESS is the master database for clinic schedules and customer bookings.
+   - Priority on Re-Enabling (WESS to CRM): When you turn the switch back ON, the system executes an automatic Catch-Up Sync where WESS data takes full priority, refreshing MiniChat X calendars to reflect any telephone or walk-in bookings made during the pause.
+4. Handling Occasional Sync Errors with 1-Click Retry:
+   - If an appointment sync ever shows an error in the Activity Logs, simply click the 'Retry Sync' button on the log entry or inside the details popup to re-push the appointment to WESS instantly.
+5. Fully Hands-Free Background Automation:
+   - All standard synchronization between WESS and MiniChat X runs automatically in the background. Staff do not need to perform manual data exports or press sync buttons; the integration continuously maintains calendar harmony.

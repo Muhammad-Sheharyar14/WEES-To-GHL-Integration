@@ -6,6 +6,7 @@ use App\Models\SyncedAppointment;
 use App\Models\WessConfig;
 use App\Models\WebhookLog;
 use App\Services\Ghl\GhlCalendarService;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Exception;
 
@@ -60,8 +61,12 @@ class WessSyncService
     /**
      * Synchronize a single location between WESS and GoHighLevel
      */
-    public function syncLocation(WessConfig $config, ?int $limit = null, bool $isTest = false): array
+    public function syncLocation(WessConfig|string $config, ?int $limit = null, bool $isTest = false): array
     {
+        if (is_string($config)) {
+            $config = WessConfig::where('location_id', $config)->firstOrFail();
+        }
+
         $locationId = $config->location_id;
         $branchId   = $config->branch_id ?: 1;
         $wessClient = new WessClient($config->api_token, $config->base_url);
@@ -80,21 +85,84 @@ class WessSyncService
                 ];
             }
 
-            // 1. Fetch upcoming appointments for the next 30 days from WESS (per official WESS API Doc section 3.12)
-            $params = [
-                'filter' => [
-                    'date_from' => now()->startOfDay()->format('Y-m-d H:i:s'),
-                    'date_to'   => now()->addDays(30)->endOfDay()->format('Y-m-d H:i:s'),
-                ],
-                'per_page' => $limit ? min($limit, 100) : 100,
-                'sort'     => 'date',
-            ];
-            $appointments = $wessClient->getAppointments($branchId, $params, true, $limit);
+            // 1. Determine date range for sync
+            // If the sync was paused by the user, initiate a catch-up recovery sync starting from sync_paused_at
+            $isCatchUp = false;
+            $targetEndDate = now()->addDays(30)->endOfDay();
 
-            // Cap appointments if limit is set (e.g. ?test=1 or ?test=5 to test first 1 or 5 real records)
+            if (!empty($freshConfig->sync_paused_at)) {
+                $isCatchUp = true;
+                $startDate = Carbon::parse($freshConfig->sync_paused_at)->startOfDay();
+                Log::info("Catch-up recovery sync initiated for location {$locationId}: fetching missed appointments from {$startDate->toDateTimeString()} to {$targetEndDate->toDateTimeString()}.");
+            } else {
+                $startDate = now()->startOfDay();
+            }
+
+            // Fetch appointments from WESS
+            // WESS API imposes a 30-day window limit per request (Section 3.12).
+            // If the total window exceeds 30 days (e.g. paused for multiple weeks), chunk into consecutive 30-day slices.
+            $appointments = [];
+            $currentStart = $startDate->copy();
+            $chunkCount   = 0;
+
+            while ($currentStart->lte($targetEndDate)) {
+                $currentEnd = $currentStart->copy()->addDays(30)->endOfDay();
+                if ($currentEnd->gt($targetEndDate)) {
+                    $currentEnd = $targetEndDate->copy();
+                }
+
+                $chunkParams = [
+                    'filter' => [
+                        'date_from' => $currentStart->format('Y-m-d H:i:s'),
+                        'date_to'   => $currentEnd->format('Y-m-d H:i:s'),
+                    ],
+                    'per_page' => $limit ? min($limit, 100) : 100,
+                    'sort'     => 'date',
+                ];
+
+                $chunkAppointments = $wessClient->getAppointments($branchId, $chunkParams, true, $limit);
+                if (!empty($chunkAppointments)) {
+                    $appointments = array_merge($appointments, $chunkAppointments);
+                }
+
+                $chunkCount++;
+
+                // If test limit was reached, stop chunking
+                if ($limit !== null && $limit > 0 && count($appointments) >= $limit) {
+                    $appointments = array_slice($appointments, 0, $limit);
+                    break;
+                }
+
+                // Advance to next chunk slice
+                $currentStart = $currentEnd->copy()->addSecond()->startOfDay();
+            }
+
+            // Deduplicate by ID in case chunk boundaries overlapped
+            if (!empty($appointments)) {
+                $uniqueMap = [];
+                foreach ($appointments as $a) {
+                    if (!empty($a['id'])) {
+                        $uniqueMap[$a['id']] = $a;
+                    }
+                }
+                $appointments = array_values($uniqueMap);
+            }
+
+            // Cap appointments if limit is set (e.g. ?test=1 or ?test=5)
             if ($limit !== null && $limit > 0 && !empty($appointments)) {
                 $appointments = array_slice($appointments, 0, $limit);
             }
+
+            $params = [
+                'filter' => [
+                    'date_from' => $startDate->format('Y-m-d H:i:s'),
+                    'date_to'   => $targetEndDate->format('Y-m-d H:i:s'),
+                ],
+                'is_catch_up' => $isCatchUp,
+                'chunks'      => $chunkCount,
+                'per_page'    => $limit ? min($limit, 100) : 100,
+                'sort'        => 'date',
+            ];
 
             $stoppedEarly = false;
 
@@ -172,7 +240,13 @@ class WessSyncService
             }
 
             // Update last_synced_at timestamp on location config
-            WessConfig::where('location_id', $locationId)->update(['last_synced_at' => now()]);
+            // If this was a catch-up recovery sync and completed without being stopped early, clear sync_paused_at
+            $updateConfig = ['last_synced_at' => now()];
+            if (!$stoppedEarly && !empty($freshConfig->sync_paused_at)) {
+                $updateConfig['sync_paused_at'] = null;
+                Log::info("Catch-up recovery sync successfully completed for location {$locationId}. Reset sync_paused_at to null.");
+            }
+            WessConfig::where('location_id', $locationId)->update($updateConfig);
 
             if ($stoppedEarly) {
                 $summaryMessage = "Sync stopped early: Master sync switch was toggled off via custom page (synced {$syncedCount} appointment(s) before stopping).";

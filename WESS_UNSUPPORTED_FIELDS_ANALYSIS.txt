@@ -1,0 +1,228 @@
+========================================================================================
+WESS & GOHIGHLEVEL INTEGRATION: UNSUPPORTED FIELDS ANALYSIS & TECHNICAL REPORT
+========================================================================================
+Project: Ample Life - WESS to GoHighLevel (MiniChat CRM) Integration
+Document: Database Field Compatibility Audit & Unsupported Fields Breakdown
+Date: October 23, 2026
+Reference: Official WESS Online API Specification v1.0.0 & Live Endpoint Testing
+========================================================================================
+
+1. EXECUTIVE SUMMARY
+----------------------------------------------------------------------------------------
+This technical report details the fields listed in the "DATA FIELDS IN THE VARIOUS DB" 
+spreadsheet that CANNOT be automatically synchronized via the official WESS Online API 
+(v1.0.0).
+
+WESS operates on a dual architecture:
+  a) A proprietary desktop/back-office management system with localized reports.
+  b) A secured, cloud-based RESTful API (api.wessconnect.com/api/v1/online/...) designed 
+     for online bookings and basic customer profile lookups.
+
+Due to strict Singapore Personal Data Protection Act (PDPA) compliance guidelines enforced 
+by WESS, as well as desktop-exclusive report calculations, certain fields are withheld or 
+unsupported via the public API.
+
+Below is the definitive list of unsupported fields, accompanied by the technical reason 
+and recommended workaround for each.
+
+
+========================================================================================
+2. LIST OF FIELDS THAT CANNOT BE SYNCED VIA WESS ONLINE API
+========================================================================================
+
+----------------------------------------------------------------------------------------
+FIELD 01: Date of Birth / Birthday
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 8)
+* Technical Status: RESTRICTED / MASKED BY WESS API
+* Reason:
+  Under Singapore PDPA guidelines and WESS API privacy architecture (documented in 
+  WESS API v1.0.0, Section 3.2, Pages 1 & 8), customer date of birth is classified 
+  as restricted personal data. The online API explicitly masks this field and returns 
+  `null` for all public API customer lookups.
+* Recommended Workaround:
+  - Collect Date of Birth directly on GHL/MiniChat booking forms or surveys.
+  - Or perform a one-time CSV import into GHL using the WESS desktop "Customer List" report.
+  - Note: The middleware has enabled "Birthday Month" calculation whenever Date of Birth 
+    is entered in GHL.
+
+
+----------------------------------------------------------------------------------------
+FIELD 02: Race
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 26)
+* Technical Status: WITHHELD BY WESS API
+* Reason:
+  Demographic and racial identity fields are masked as `null` by the WESS Online API 
+  for privacy and compliance purposes. They are strictly stored for internal salon 
+  desktop records only.
+* Recommended Workaround:
+  - If required for marketing segmentation, collect via GHL custom fields on client forms.
+
+
+----------------------------------------------------------------------------------------
+FIELD 03: Religion
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 27)
+* Technical Status: WITHHELD BY WESS API
+* Reason:
+  Religious affiliation data is withheld and returns `null` over the WESS Online API 
+  per Singapore data privacy compliance standards.
+* Recommended Workaround:
+  - Collect via GHL custom field if needed; otherwise maintain in desktop WESS.
+
+
+----------------------------------------------------------------------------------------
+FIELD 04: Nationality
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 28)
+* Technical Status: WITHHELD BY WESS API
+* Reason:
+  Nationality is masked as `null` in API responses (`GET /branches/{id}/customers/{id}`). 
+  It is not exposed over the REST API interface.
+* Recommended Workaround:
+  - Manage as an internal GHL contact custom field if needed for foreign customer tracking.
+
+
+----------------------------------------------------------------------------------------
+FIELD 05: Marital Status
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 30)
+* Technical Status: WITHHELD BY WESS API
+* Reason:
+  Classified as sensitive demographic data; masked by the WESS Online API and returns `null`.
+* Recommended Workaround:
+  - Collect directly in GHL via intake questionnaires if relevant for promotional campaigns.
+
+
+----------------------------------------------------------------------------------------
+FIELD 06: Total Spent / Total Spending (SGD)
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer Spending Report (Row 18 - Blue Highlight)
+* Technical Status: DESKTOP REPORT CALCULATION ONLY (NO API ENDPOINT)
+* Reason:
+  In WESS, "Total Spending" is not a static column on the customer table; it is a 
+  dynamically aggregated accounting report generated by running the internal desktop 
+  "Customer Spending Report". The WESS Online API does not provide a lifetime expenditure 
+  endpoint or pre-calculated customer spending aggregate.
+* Recommended Workaround:
+  - Export the "Customer Spending Report" from WESS desktop software periodically (e.g. 
+    monthly) and perform a bulk update to GHL contact custom fields via CSV.
+
+
+----------------------------------------------------------------------------------------
+FIELD 07: Prepaid Balance / Prepaid Details
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer Prepaid Details (Row 19)
+* Technical Status: REQUIRES SPECIAL WESS PERMISSION APPROVAL (SECTION 3.8)
+* Reason:
+  While WESS API v1.0.0 defines an endpoint for customer prepaid purchases 
+  (`GET /customers/{id}/sales/prepaid-purchase`), this endpoint is locked and inaccessible 
+  by default. Attempting to query it without explicit administrative permission granted 
+  by WESS HQ returns HTTP 403 Forbidden.
+* Recommended Workaround:
+  - Ample Life / Client management must submit a formal API scope expansion request to 
+    WESS support requesting access to "Section 3.8: Prepaid Purchases API". Once approved, 
+    the middleware can be pointed to this endpoint.
+
+
+----------------------------------------------------------------------------------------
+FIELD 08: First Visit Date
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 20)
+* Technical Status: NOT EXPOSED IN ONLINE API
+* Reason:
+  The WESS Customer object in the online API only exposes `code`, `first_name`, `last_name`, 
+  `phone_mobile`, `salutation`, `gender`, and `ic_no`. It does not include an all-time 
+  historical "First Visit Date". The appointment API only supports querying active 
+  appointments within a bounded date window (up to 30 days).
+* Recommended Workaround:
+  - Note: "Last Visit Date" IS fully supported and automatically synced by the middleware. 
+    "First Visit" can be populated upon initial contact creation in GHL.
+
+
+----------------------------------------------------------------------------------------
+FIELD 09: Special Remarks (`Special Rem`)
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 17)
+* Technical Status: INTERNAL DESKTOP SALON REMARKS ONLY
+* Reason:
+  Internal therapist/front-desk notes entered in the WESS desktop software are not 
+  serialized or transmitted via the online booking API customer schema.
+* Recommended Workaround:
+  - Maintain operational notes inside GoHighLevel Contact Notes or custom text areas.
+
+
+----------------------------------------------------------------------------------------
+FIELD 10: Marketing Remarks (`Marketing Rem`)
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 23)
+* Technical Status: INTERNAL DESKTOP SALON REMARKS ONLY
+* Reason:
+  Similar to Special Remarks, this field exists only in localized desktop report tables 
+  and is omitted from the public WESS online API.
+* Recommended Workaround:
+  - Use GHL Tags or GHL Contact Custom Fields to manage marketing preferences and remarks.
+
+
+----------------------------------------------------------------------------------------
+FIELD 11: Customer Group
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 22)
+* Technical Status: NOT EXPOSED IN ONLINE API
+* Reason:
+  Customer classification groups (e.g. VIP, Regular, Staff, Blacklist) are managed in 
+  the desktop WESS database schema and are not exposed in the API v1.0.0 response payload.
+* Recommended Workaround:
+  - The middleware provides an automated "Contact Type" custom field in GHL that classifies 
+    contacts as "Existing Member" or "New Lead", which can be combined with GHL Tags for 
+    grouping.
+
+
+----------------------------------------------------------------------------------------
+FIELD 12: Membership Number (`Membership No`)
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Row 25)
+* Technical Status: COVERED BY WESS CODE (NO SEPARATE API FIELD)
+* Reason:
+  In WESS, the primary identifier for any member is the `Code` (e.g., `C006071`). The 
+  online API does not provide a separate secondary membership card number field.
+* Recommended Workaround:
+  - The middleware already synchronizes the WESS `Code` directly to the GHL custom field 
+    "WESS Code", which serves as the unique member ID.
+
+
+----------------------------------------------------------------------------------------
+FIELD 13: Sharing Account & Shared Package Customer Code (`Shared Pkg Cust Code`)
+----------------------------------------------------------------------------------------
+* Sheet Source: WESS Customer List (Rows 14 & 15)
+* Technical Status: DESKTOP PACKAGE LOGIC / MW GENERATE
+* Reason:
+  Package sharing between family members or friends is handled by relational logic 
+  internal to the desktop WESS point-of-sale system. The API does not expose parent/child 
+  customer linkage trees.
+* Recommended Workaround:
+  - As noted on the client's sheet under "MW Generate", this can be managed via custom 
+    referral/relationship tracking in GHL or by inputting the related member's WESS Code.
+
+
+========================================================================================
+3. SUMMARY OF COMPATIBLE & IMPLEMENTED CUSTOM FIELDS
+========================================================================================
+For clarity, the following fields ARE fully supported and handled by the middleware:
+
+1. WESS Code             -> Automatically synced to GHL custom field 'WESS Code'
+2. Last Visit Date       -> Automatically computed and synced to GHL 'Last Visit'
+3. Salutation            -> Synced from WESS API to GHL 'Salutation' (Mr, Mrs, Ms, Dr)
+4. Gender                -> Synced from WESS API to GHL 'Gender' (M / F / Male / Female)
+5. NRIC / ID Number      -> Synced from WESS API to GHL 'NRIC'
+6. Contact Type          -> Generated by Middleware ('Existing Member' vs 'New Lead')
+7. Birthday Month        -> Generated by Middleware from GHL Date of Birth (e.g. October)
+8. Preferred Name        -> Generated from GHL Contact First Name / Preferred Name
+9. Branch                -> Mapped to active WESS clinic branch (e.g. Royal Square @ Novena)
+10. Email & Mobile Phone -> Fully bidirectionally synced between GHL and WESS
+
+========================================================================================
+Prepared by: Technical Engineering Team
+Approved for Client Review
+========================================================================================

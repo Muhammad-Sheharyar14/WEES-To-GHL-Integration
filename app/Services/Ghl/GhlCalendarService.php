@@ -437,6 +437,16 @@ class GhlCalendarService
         $calendarId = $customCalendarId;
         $userId     = $customUserId;
 
+        if (empty($calendarId) || empty($userId)) {
+            $config = \App\Models\WessConfig::where('location_id', $locationId)->first();
+            if (empty($calendarId)) {
+                $calendarId = $config?->calendar_id;
+            }
+            if (empty($userId)) {
+                $userId = $config?->calendar_user_id;
+            }
+        }
+
         if (empty($calendarId)) {
             $calendar = $this->getOrCreateWessCalendar($locationId);
             $calendarId = $calendar['id'] ?? 'default_wess_calendar';
@@ -515,6 +525,22 @@ class GhlCalendarService
 
         // Pass assignedUserId if present
         $assignedUser = $userId ?: ($wessAppointment['staff_id'] ?? null);
+
+        // If assignedUser is not set, auto-resolve staff directly from the calendar's definition
+        if (empty($assignedUser) && !empty($calendarId)) {
+            try {
+                $allCals = $this->getCalendars($locationId);
+                foreach ($allCals as $c) {
+                    if (($c['id'] ?? '') === $calendarId && !empty($c['user_id'])) {
+                        $assignedUser = $c['user_id'];
+                        break;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::debug("Could not resolve calendar staff user_id: " . $e->getMessage());
+            }
+        }
+
         if (!empty($assignedUser)) {
             $payload['assignedUserId'] = $assignedUser;
         }
@@ -569,15 +595,23 @@ class GhlCalendarService
             // fall back to block-slots (Excel Item A.4: MC slot block without requiring contact)
             if (!$res || $res->status() === 422) {
                 Log::info("Falling back to calendars/events/block-slots for location {$locationId}");
-                $blockPayload = [
-                    'calendarId' => $calendarId,
+
+                // GHL Official Documentation Rule (https://marketplace.gohighlevel.com/docs/ghl/calendars/create-block-slot):
+                // "Either calendarId or assignedUserId can be set, not both."
+                // For staff/personal calendars, assignedUserId is used to block the user.
+                // For general/unassigned event calendars, calendarId is used.
+                $baseBlockPayload = [
                     'locationId' => $locationId,
                     'title'      => $title,
                     'startTime'  => $startTime,
                     'endTime'    => $endTime,
                 ];
+
+                $blockPayload = $baseBlockPayload;
                 if (!empty($assignedUser)) {
                     $blockPayload['assignedUserId'] = $assignedUser;
+                } elseif (!empty($calendarId)) {
+                    $blockPayload['calendarId'] = $calendarId;
                 }
 
                 if ($isUpdate && $method === 'PUT') {
@@ -593,6 +627,29 @@ class GhlCalendarService
                     $method   = 'POST';
                     $res      = $this->ghlRequest('POST', $endpoint, $locationId, $blockPayload);
                 }
+
+                // Resilient Fallback: If CRM returned 400 Bad Request, try alternating between assignedUserId and calendarId
+                if ($res && $res->status() === 400) {
+                    $alternatePayload = $baseBlockPayload;
+                    if (isset($blockPayload['assignedUserId']) && !empty($calendarId)) {
+                        $alternatePayload['calendarId'] = $calendarId;
+                        Log::info("Retrying block-slots with alternate parameter 'calendarId': {$calendarId}");
+                        $altRes = $this->ghlRequest($method, $endpoint, $locationId, $alternatePayload);
+                        if ($altRes->successful()) {
+                            $res          = $altRes;
+                            $blockPayload = $alternatePayload;
+                        }
+                    } elseif (isset($blockPayload['calendarId']) && !empty($assignedUser)) {
+                        $alternatePayload['assignedUserId'] = $assignedUser;
+                        Log::info("Retrying block-slots with alternate parameter 'assignedUserId': {$assignedUser}");
+                        $altRes = $this->ghlRequest($method, $endpoint, $locationId, $alternatePayload);
+                        if ($altRes->successful()) {
+                            $res          = $altRes;
+                            $blockPayload = $alternatePayload;
+                        }
+                    }
+                }
+
                 $payload = $blockPayload;
             }
 
@@ -720,12 +777,12 @@ class GhlCalendarService
     }
 
     /**
-     * Update GHL Contact Custom Fields (Excel Item B.i: WESS Code & Last Visit)
+     * Update GHL Contact Custom Fields (WESS Code, Last Visit, and additional customer fields)
      */
-    public function updateContactWessFields(string $locationId, string $contactId, string $wessCode, ?string $lastVisit = null): bool
+    public function updateContactWessFields(string $locationId, string $contactId, string $wessCode, ?string $lastVisit = null, array $additionalFields = []): bool
     {
         return app(\App\Services\Ghl\GhlCustomFieldService::class)
-            ->updateContactCustomFields($locationId, $contactId, $wessCode, $lastVisit);
+            ->updateContactCustomFields($locationId, $contactId, $wessCode, $lastVisit, $additionalFields);
     }
 
     /**

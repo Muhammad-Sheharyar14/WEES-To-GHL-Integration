@@ -213,4 +213,252 @@ class GhlWebhookTest extends TestCase
         $this->assertStringContainsString('Loop prevention', $log->response_body);
     }
 
+    public function test_appointment_update_reschedules_in_wess_when_time_changed(): void
+    {
+        WessConfig::create([
+            'location_id'     => 'loc_update_test',
+            'api_token'       => 'test_token',
+            'base_url'        => 'https://api.wessconnect.com/api/v1/online',
+            'branch_id'       => 1,
+            'is_sync_enabled' => true,
+        ]);
+
+        \App\Models\SyncedAppointment::create([
+            'location_id'         => 'loc_update_test',
+            'wess_appointment_id' => '28131209',
+            'ghl_appointment_id'  => 'ghl_appt_resched_1',
+            'status'              => 'confirmed',
+            'start_time'          => '2026-10-26 20:45:00',
+            'end_time'            => '2026-10-26 21:45:00',
+        ]);
+
+        $cancelledOldAppt = false;
+        $bookedNewAppt    = false;
+        $capturedNewDate  = null;
+
+        Http::fake([
+            'https://api.wessconnect.com/api/v1/online/customers/lookup/phone-number/*' => Http::response([
+                [
+                    'id'         => 4748191,
+                    'first_name' => 'Sherry',
+                    'last_name'  => 'Test',
+                ],
+            ], 200),
+
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments/services' => Http::response([
+                'data' => [
+                    [
+                        'id'   => 329401,
+                        'code' => 'S01007',
+                        'name' => 'MC Generic Service',
+                    ],
+                ],
+            ], 200),
+
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments/28131209/cancel' => function ($request) use (&$cancelledOldAppt) {
+                $cancelledOldAppt = true;
+                return Http::response(['success' => true], 200);
+            },
+
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments' => function ($request) use (&$bookedNewAppt, &$capturedNewDate) {
+                $bookedNewAppt = true;
+                $data = $request->data();
+                $capturedNewDate = $data['date'] ?? null;
+                return Http::response([
+                    'data' => [
+                        'id'     => 28131555,
+                        'status' => 'Request',
+                    ],
+                ], 200);
+            },
+        ]);
+
+        $response = $this->postJson('/api/webhook', [
+            'type'        => 'AppointmentUpdate',
+            'locationId'  => 'loc_update_test',
+            'appointment' => [
+                'id'                => 'ghl_appt_resched_1',
+                'appointmentStatus' => 'confirmed',
+                'startTime'         => '2026-10-26T11:15:00.000Z', // 19:15:00 Singapore Time
+                'phone'             => '+6581234567',
+                'firstName'         => 'Sherry',
+                'lastName'          => 'Test',
+            ],
+        ]);
+
+        $response->assertStatus(200);
+
+        // Verify old booking was cancelled and new booking was made with new date
+        $this->assertTrue($cancelledOldAppt, 'Expected old WESS appointment #28131209 to be cancelled');
+        $this->assertTrue($bookedNewAppt, 'Expected new WESS appointment to be booked');
+        $this->assertEquals('2026-10-26 19:15:00', $capturedNewDate);
+
+        // Verify database records
+        $this->assertDatabaseHas('synced_appointments', [
+            'location_id'         => 'loc_update_test',
+            'wess_appointment_id' => '28131555',
+            'ghl_appointment_id'  => 'ghl_appt_resched_1',
+            'start_time'          => '2026-10-26 19:15:00',
+        ]);
+
+        $this->assertDatabaseHas('synced_appointments', [
+            'location_id'         => 'loc_update_test',
+            'wess_appointment_id' => '28131209',
+            'status'              => 'cancelled',
+        ]);
+
+        $log = WebhookLog::where('location_id', 'loc_update_test')->latest()->first();
+        $this->assertNotNull($log);
+        $this->assertStringContainsString('updated', $log->response_body);
+        $this->assertStringContainsString('28131555', $log->response_body);
+    }
+
+    public function test_appointment_update_skips_when_no_details_changed(): void
+    {
+        WessConfig::create([
+            'location_id'     => 'loc_noop_test',
+            'api_token'       => 'test_token',
+            'base_url'        => 'https://api.wessconnect.com/api/v1/online',
+            'branch_id'       => 1,
+            'is_sync_enabled' => true,
+        ]);
+
+        \App\Models\SyncedAppointment::create([
+            'location_id'         => 'loc_noop_test',
+            'wess_appointment_id' => '28131209',
+            'ghl_appointment_id'  => 'ghl_appt_noop_1',
+            'status'              => 'confirmed',
+            'start_time'          => '2026-10-26 19:15:00',
+            'end_time'            => '2026-10-26 19:30:00',
+        ]);
+
+        $calledCancelOrBook = false;
+
+        Http::fake([
+            'https://api.wessconnect.com/api/v1/online/customers/lookup/phone-number/*' => Http::response([
+                [
+                    'id'         => 4748191,
+                    'first_name' => 'Sherry',
+                    'last_name'  => 'Test',
+                ],
+            ], 200),
+
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments/services' => Http::response([
+                'data' => [
+                    [
+                        'id'   => 329401,
+                        'code' => 'S01007',
+                        'name' => 'MC Generic Service',
+                    ],
+                ],
+            ], 200),
+
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments*' => function ($request) use (&$calledCancelOrBook) {
+                if ($request->method() === 'POST' || $request->method() === 'PATCH') {
+                    $calledCancelOrBook = true;
+                }
+                return Http::response(['success' => true], 200);
+            },
+        ]);
+
+        $response = $this->postJson('/api/webhook', [
+            'type'        => 'AppointmentUpdate',
+            'locationId'  => 'loc_noop_test',
+            'appointment' => [
+                'id'                => 'ghl_appt_noop_1',
+                'appointmentStatus' => 'confirmed',
+                'startTime'         => '2026-10-26T11:15:00.000Z', // evaluates to 2026-10-26 19:15:00 (identical)
+                'phone'             => '+6581234567',
+                'firstName'         => 'Sherry',
+                'lastName'          => 'Test',
+            ],
+        ]);
+
+        $response->assertStatus(200);
+
+        $this->assertFalse($calledCancelOrBook, 'Expected neither cancellation nor booking for identical details');
+
+        $log = WebhookLog::where('location_id', 'loc_noop_test')->latest()->first();
+        $this->assertNotNull($log);
+        $this->assertStringContainsString('skipped', $log->response_body);
+        $this->assertStringContainsString('identical schedule details', $log->response_body);
+    }
+
+    public function test_appointment_update_does_not_cancel_when_ghl_status_differs_from_wess_request(): void
+    {
+        WessConfig::create([
+            'location_id'     => 'loc_status_diff_test',
+            'api_token'       => 'test_token',
+            'base_url'        => 'https://api.wessconnect.com/api/v1/online',
+            'branch_id'       => 1,
+            'is_sync_enabled' => true,
+        ]);
+
+        // In WESS, the booking was created with status 'Request'
+        $synced = \App\Models\SyncedAppointment::create([
+            'location_id'         => 'loc_status_diff_test',
+            'wess_appointment_id' => '28134588',
+            'ghl_appointment_id'  => 'ghl_appt_diff_1',
+            'status'              => 'Request',
+            'start_time'          => '2026-10-26 14:45:00',
+            'end_time'            => '2026-10-26 15:00:00',
+        ]);
+
+        $calledCancelOrBook = false;
+
+        Http::fake([
+            'https://api.wessconnect.com/api/v1/online/customers/lookup/phone-number/*' => Http::response([
+                [
+                    'id'         => 4748191,
+                    'first_name' => 'Sherry',
+                    'last_name'  => 'Test',
+                ],
+            ], 200),
+
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments/services' => Http::response([
+                'data' => [
+                    [
+                        'id'   => 329401,
+                        'code' => 'S01007',
+                        'name' => 'MC Generic Service',
+                    ],
+                ],
+            ], 200),
+
+            'https://api.wessconnect.com/api/v1/online/branches/1/appointments*' => function ($request) use (&$calledCancelOrBook) {
+                if ($request->method() === 'POST' || $request->method() === 'PATCH') {
+                    $calledCancelOrBook = true;
+                }
+                return Http::response(['success' => true], 200);
+            },
+        ]);
+
+        // GHL sends an AppointmentUpdate with appointmentStatus = 'confirmed' for the same slot
+        $response = $this->postJson('/api/webhook', [
+            'type'        => 'AppointmentUpdate',
+            'locationId'  => 'loc_status_diff_test',
+            'appointment' => [
+                'id'                => 'ghl_appt_diff_1',
+                'appointmentStatus' => 'confirmed',
+                'startTime'         => '2026-10-26T06:45:00.000Z', // 14:45:00 SG time (identical)
+                'phone'             => '+6581234567',
+                'firstName'         => 'Sherry',
+                'lastName'          => 'Test',
+            ],
+        ]);
+
+        $response->assertStatus(200);
+
+        // Crucial Assertion: Must NEVER cancel or rebook in WESS when time has not changed!
+        $this->assertFalse($calledCancelOrBook, 'Expected neither cancellation nor booking in WESS when time has not changed');
+
+        // Local record status is updated to confirmed
+        $this->assertEquals('confirmed', $synced->fresh()->status);
+
+        $log = WebhookLog::where('location_id', 'loc_status_diff_test')->latest()->first();
+        $this->assertNotNull($log);
+        $this->assertStringContainsString('skipped', $log->response_body);
+        $this->assertStringContainsString('identical schedule details', $log->response_body);
+    }
 }
+

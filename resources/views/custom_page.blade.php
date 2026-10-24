@@ -1045,6 +1045,42 @@
             border-color: var(--primary-border);
         }
 
+        .btn-retry-sync {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: var(--radius-sm);
+            color: #b45309;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+
+        .btn-retry-sync:hover:not(:disabled) {
+            background: #fef3c7;
+            border-color: #fcd34d;
+            color: #92400e;
+            box-shadow: 0 1px 3px rgba(180, 83, 9, 0.12);
+        }
+
+        .btn-retry-sync:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-retry-sync svg {
+            transition: transform 0.2s ease;
+        }
+
+        .btn-retry-sync.retrying svg {
+            animation: spin 0.8s linear infinite;
+        }
+
         /* Pagination Bar */
         .pagination-container {
             display: flex;
@@ -1609,7 +1645,7 @@
                             <th>Event / Action</th>
                             <th style="width: 130px;">HTTP Method</th>
                             <th style="width: 170px;">Date & Time</th>
-                            <th style="width: 110px; text-align: right;">Details</th>
+                            <th style="width: 150px; text-align: right;">Action</th>
                         </tr>
                     </thead>
                     <tbody id="logsTableBody">
@@ -1707,7 +1743,13 @@
             </div>
         </div>
 
-        <div class="modal-footer">
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+            <div id="modalRetryWrapper" style="display: none;">
+                <button type="button" class="btn-retry-sync" id="modalBtnRetry" onclick="retryFromModal()">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                    <span>Retry Sync to WESS</span>
+                </button>
+            </div>
             <button type="button" class="btn btn-secondary btn-sm" onclick="closeLogModal()">Close</button>
         </div>
     </div>
@@ -2447,6 +2489,13 @@
             const methodClass = (item.method || 'POST').toLowerCase();
             const displaySource = item.source === 'ghl_webhook' ? 'CRM Webhook' : (item.source === 'wess_sync' ? 'WESS Sync' : (item.source || '—'));
 
+            const retryBtnHtml = item.can_retry ? `
+                <button type="button" class="btn-retry-sync" id="btnRetry_${item.id}" onclick="retryAppointmentLog(${item.id}, event)" title="Retry syncing this appointment to WESS">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                    <span>Retry</span>
+                </button>
+            ` : '';
+
             return `
                 <tr>
                     <td>
@@ -2466,9 +2515,12 @@
                         <div style="font-size: 11.5px; color: var(--text-subtle);">${escapeHtml(item.created_at_human)}</div>
                     </td>
                     <td style="text-align: right;">
-                        <button type="button" class="btn-view-detail" onclick="openLogModal(${index})">
-                            <span>View</span> &rarr;
-                        </button>
+                        <div style="display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end;">
+                            ${retryBtnHtml}
+                            <button type="button" class="btn-view-detail" onclick="openLogModal(${index})">
+                                <span>View</span> &rarr;
+                            </button>
+                        </div>
                     </td>
                 </tr>
             `;
@@ -2578,6 +2630,12 @@
             }
         }
 
+        currentModalLogId = item.id;
+        const retryWrapper = document.getElementById('modalRetryWrapper');
+        if (retryWrapper) {
+            retryWrapper.style.display = item.can_retry ? 'block' : 'none';
+        }
+
         switchModalView('both');
         document.getElementById('logDetailBackdrop').classList.add('show');
     }
@@ -2618,6 +2676,71 @@
 
     function closeLogModal() {
         document.getElementById('logDetailBackdrop').classList.remove('show');
+    }
+
+    let currentModalLogId = null;
+
+    function retryFromModal() {
+        if (!currentModalLogId) return;
+        const btn = document.getElementById('modalBtnRetry');
+        retryAppointmentLog(currentModalLogId, null, btn);
+    }
+
+    function retryAppointmentLog(logId, event, customBtn = null) {
+        if (event) {
+            event.stopPropagation();
+        }
+
+        const btn = customBtn || document.getElementById(`btnRetry_${logId}`);
+        const locationId = document.getElementById('locationId').value;
+
+        if (btn) {
+            btn.disabled = true;
+            btn.classList.add('retrying');
+            const span = btn.querySelector('span');
+            if (span) span.textContent = 'Retrying...';
+        }
+
+        fetch("{{ route('api.custom-page.retry-log') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                log_id: logId,
+                locationId: locationId
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                notify('success', 'Retry Succeeded', data.message || 'Appointment synced to WESS successfully.');
+                fetchLogs(currentLogsPage);
+                if (document.getElementById('logDetailBackdrop').classList.contains('show')) {
+                    closeLogModal();
+                }
+            } else {
+                notify('error', 'Retry Failed', data.message || 'Failed to sync appointment to WESS.');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('retrying');
+                    const span = btn.querySelector('span');
+                    if (span) span.textContent = 'Retry';
+                }
+            }
+        })
+        .catch(err => {
+            console.error('Retry error:', err);
+            notify('error', 'Network Error', 'Could not reach server to retry sync.');
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('retrying');
+                const span = btn.querySelector('span');
+                if (span) span.textContent = 'Retry';
+            }
+        });
     }
 
     function handleBackdropClick(event) {

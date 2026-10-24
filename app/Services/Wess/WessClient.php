@@ -261,18 +261,47 @@ class WessClient
     }
 
     /**
-     * Lookup customer by phone number
+     * Lookup customer by phone number in WESS.
+     * Evaluates multiple phone formats because existing desktop WESS customers have '+65' prefixes
+     * (e.g. '+6596704307'), whereas online created customers or raw input may have '6596704307' or '96704307'.
      */
     public function lookupCustomerByPhone(string $phoneNumber): ?array
     {
-        // Strip non-digits if needed, keeping country code
-        $cleanedPhone = preg_replace('/[^0-9]/', '', $phoneNumber);
-        $response = $this->request('GET', "{$this->baseUrl}/customers/lookup/phone-number/{$cleanedPhone}");
+        $rawDigits = preg_replace('/[^0-9]/', '', $phoneNumber);
+        if (empty($rawDigits)) {
+            return null;
+        }
 
-        if ($response->successful()) {
-            $data = $response->json();
-            if (is_array($data) && !empty($data[0])) {
-                return $data[0];
+        // Build list of candidate search formats in priority order
+        $candidates = [];
+
+        // 1. If 10 digits starting with 65 (Singapore format with country code, e.g. 6596704307)
+        if (strlen($rawDigits) === 10 && str_starts_with($rawDigits, '65')) {
+            $candidates[] = "+{$rawDigits}";       // +6596704307 (Existing desktop member format)
+            $candidates[] = $rawDigits;            // 6596704307 (Online created format)
+            $candidates[] = substr($rawDigits, 2); // 96704307 (Local 8-digit format)
+        } 
+        // 2. If 8 digits starting with 8 or 9 (Singapore local mobile, e.g. 96704307)
+        elseif (strlen($rawDigits) === 8 && in_array($rawDigits[0], ['8', '9'])) {
+            $candidates[] = "+65{$rawDigits}";     // +6596704307 (Existing desktop member format)
+            $candidates[] = "65{$rawDigits}";      // 6596704307 (Online created format)
+            $candidates[] = $rawDigits;            // 96704307 (Local format)
+        } 
+        // 3. Other international numbers (Malaysia +60, US +1, UK +44, etc.)
+        else {
+            $candidates[] = "+{$rawDigits}";
+            $candidates[] = $rawDigits;
+        }
+
+        $uniqueCandidates = array_unique($candidates);
+
+        foreach ($uniqueCandidates as $candidate) {
+            $response = $this->request('GET', "{$this->baseUrl}/customers/lookup/phone-number/{$candidate}");
+            if ($response->successful()) {
+                $data = $response->json();
+                if (is_array($data) && !empty($data[0])) {
+                    return $data[0];
+                }
             }
         }
 

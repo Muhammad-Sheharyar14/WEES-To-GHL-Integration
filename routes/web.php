@@ -54,6 +54,7 @@ Route::post('/api/custom-page/calendars', [CustomPageController::class, 'getCale
 Route::get('/api/custom-page/calendars', [CustomPageController::class, 'getCalendars']);
 Route::post('/api/custom-page/logs', [CustomPageController::class, 'getLogs'])->name('api.custom-page.logs');
 Route::get('/api/custom-page/logs', [CustomPageController::class, 'getLogs']);
+Route::post('/api/custom-page/retry-log', [CustomPageController::class, 'retryLog'])->name('api.custom-page.retry-log');
 
 /*
 |--------------------------------------------------------------------------

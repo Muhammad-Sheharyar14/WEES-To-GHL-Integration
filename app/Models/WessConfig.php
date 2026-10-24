@@ -22,12 +22,14 @@ class WessConfig extends Model
         'calendar_name',
         'calendar_user_id',
         'is_sync_enabled',
+        'sync_paused_at',
         'is_connected',
         'last_synced_at',
     ];
 
     protected $casts = [
         'is_sync_enabled' => 'boolean',
+        'sync_paused_at'  => 'datetime',
         'is_connected'    => 'boolean',
         'last_synced_at'  => 'datetime',
     ];

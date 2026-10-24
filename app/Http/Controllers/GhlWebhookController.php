@@ -124,7 +124,7 @@ class GhlWebhookController extends Controller
      * Handle Appointment Webhooks from GoHighLevel
      * Schema: appointment { id, contactId, calendarId, startTime, endTime, appointmentStatus, notes, title }
      */
-    protected function handleAppointmentWebhook(?string $locationId, string $type, array $payload, WebhookLog $log): void
+    public function handleAppointmentWebhook(?string $locationId, string $type, array $payload, WebhookLog $log): void
     {
         try {
             if (empty($locationId)) {
@@ -208,26 +208,8 @@ class GhlWebhookController extends Controller
                     ]);
                     return;
                 }
-
-                // Layer 3: Persistent Database Mapping Check
-                if ($appointmentId) {
-                    $existingSync = SyncedAppointment::where('location_id', $locationId)
-                        ->where('ghl_appointment_id', (string) $appointmentId)
-                        ->first();
-
-                    if ($existingSync && $existingSync->wess_appointment_id) {
-                        Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} as it is already tracked as WESS booking #{$existingSync->wess_appointment_id}.");
-                        $log->update([
-                            'response_status' => 200,
-                            'response_body'   => json_encode([
-                                'status'              => 'skipped',
-                                'message'             => "Loop prevention: Appointment is already linked to WESS booking #{$existingSync->wess_appointment_id}.",
-                                'wess_appointment_id' => $existingSync->wess_appointment_id,
-                            ]),
-                        ]);
-                        return;
-                    }
-                }
+                // Layer 3 (Contextual): Note that database mapping check & change detection
+                // are performed contextually before booking, allowing legitimate CRM appointment updates/rescheduling.
             }
 
             // Cancellation / Deletion Event
@@ -432,9 +414,11 @@ class GhlWebhookController extends Controller
             }
 
             // 1. Lookup or Create Customer in WESS
+            $isExistingCustomer = true;
             $customer = $wessClient->lookupCustomerByPhone($phone);
 
             if (!$customer) {
+                $isExistingCustomer = false;
                 $phoneData = WessClient::parsePhoneNumber($phone);
                 $customer = $wessClient->createCustomer($branchId, [
                     'first_name'                => $firstName ?: 'Customer',
@@ -457,15 +441,34 @@ class GhlWebhookController extends Controller
                 return;
             }
 
-            // Update GHL Contact custom fields (WESS Code & Last Visit)
+            // Update GHL Contact custom fields (WESS Code, Last Visit, Salutation, Gender, NRIC, Contact Type, etc.)
             if (!empty($customer['id']) && !empty($contactId)) {
                 try {
                     $lastVisitDate = !empty($startTime) ? date('Y-m-d', strtotime($startTime)) : null;
+                    $wessCode      = $customer['code'] ?? (string)$customer['id'];
+                    $salutation    = $customer['salutation'] ?? null;
+                    $gender        = $customer['customer_detail']['gender'] ?? ($customer['gender'] ?? null);
+                    $nric          = $customer['ic_no'] ?? null;
+                    $contactType   = $isExistingCustomer ? 'Existing Member' : 'New Lead';
+                    $prefName      = $firstName ?: ($customer['first_name'] ?? null);
+                    $bdayMonth     = null;
+                    if (!empty($contact['dateOfBirth'])) {
+                        $bdayMonth = date('F', strtotime($contact['dateOfBirth']));
+                    }
+
                     app(\App\Services\Ghl\GhlCustomFieldService::class)->updateContactCustomFields(
                         $locationId,
                         $contactId,
-                        (string)$customer['id'],
-                        $lastVisitDate
+                        (string)$wessCode,
+                        $lastVisitDate,
+                        [
+                            'salutation'     => $salutation,
+                            'gender'         => $gender,
+                            'nric'           => $nric,
+                            'contact_type'   => $contactType,
+                            'birthday_month' => $bdayMonth,
+                            'preferred_name' => $prefName,
+                        ]
                     );
                 } catch (Exception $e) {
                     Log::warning("Could not sync custom fields for contact {$contactId}: " . $e->getMessage());
@@ -561,11 +564,94 @@ class GhlWebhookController extends Controller
                 Log::warning("Could not auto-resolve therapist for WESS booking: " . $mapEx->getMessage());
             }
 
+            // Layer 3: Change Detection for Existing Synced Appointments
+            $existingSync = null;
+            $oldWessId    = null;
+
+            if ($appointmentId) {
+                // Find latest active synced appointment for this CRM appointment
+                $existingSync = SyncedAppointment::where('location_id', $locationId)
+                    ->where('ghl_appointment_id', (string) $appointmentId)
+                    ->where('status', '!=', 'cancelled')
+                    ->latest('id')
+                    ->first();
+
+                // Fallback to any latest record if none currently active
+                if (!$existingSync) {
+                    $existingSync = SyncedAppointment::where('location_id', $locationId)
+                        ->where('ghl_appointment_id', (string) $appointmentId)
+                        ->latest('id')
+                        ->first();
+                }
+
+                if ($existingSync && $existingSync->wess_appointment_id) {
+                    $existingStartTime     = $existingSync->start_time ? Carbon::parse($existingSync->start_time)->format('Y-m-d H:i:s') : null;
+                    $newStartTimeFormatted = Carbon::parse($apptDate)->format('Y-m-d H:i:s');
+
+                    $hasTimeChanged     = ($existingStartTime !== $newStartTimeFormatted);
+                    $hasUserChanged     = !empty($assignedUserId) && ($assignedUserId !== $existingSync->assigned_user_id);
+                    $hasCalendarChanged = !empty($calendarId) && ($calendarId !== $existingSync->calendar_id);
+
+                    // Rescheduling in WESS (cancelling old booking and creating new booking)
+                    // is ONLY triggered if the appointment schedule (time, therapist, calendar) has actually changed.
+                    // Generic status updates (e.g. 'confirmed', 'showed') must NOT cancel an active WESS booking.
+                    $isRealUpdate = $hasTimeChanged || $hasUserChanged || $hasCalendarChanged;
+
+                    if (!$isRealUpdate) {
+                        // Update local status if changed in CRM, without cancelling the WESS booking
+                        if (!empty($status) && strcasecmp($status, (string) $existingSync->status) !== 0) {
+                            $existingSync->update(['status' => $status]);
+                        }
+
+                        Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} as no schedule changes detected (already linked to WESS booking #{$existingSync->wess_appointment_id}).");
+                        $log->update([
+                            'response_status' => 200,
+                            'response_body'   => json_encode([
+                                'status'              => 'skipped',
+                                'message'             => "Loop prevention: Appointment is already linked to WESS booking #{$existingSync->wess_appointment_id} with identical schedule details.",
+                                'wess_appointment_id' => $existingSync->wess_appointment_id,
+                            ]),
+                        ]);
+                        return;
+                    }
+
+                    $oldWessId = $existingSync->wess_appointment_id;
+                    Log::info("AppointmentUpdate for {$appointmentId}: Rescheduling WESS booking (old: #{$oldWessId}, timeChanged=" . ($hasTimeChanged ? 'yes' : 'no') . ", userChanged=" . ($hasUserChanged ? 'yes' : 'no') . ")");
+
+                    // Cancel ALL prior active bookings for this CRM appointment in WESS to prevent lingering active slots
+                    $priorActiveSyncs = SyncedAppointment::where('location_id', $locationId)
+                        ->where('ghl_appointment_id', (string) $appointmentId)
+                        ->where('status', '!=', 'cancelled')
+                        ->get();
+
+                    if (!empty($customer['id'])) {
+                        foreach ($priorActiveSyncs as $pSync) {
+                            $targetWessId = $pSync->wess_appointment_id;
+                            try {
+                                $wessClient->cancelAppointment($branchId, $targetWessId, (int) $customer['id']);
+                                Log::info("Cancelled prior WESS booking #{$targetWessId} for rescheduled appointment {$appointmentId}.");
+                            } catch (\Throwable $cancelEx) {
+                                Log::warning("Could not cancel old WESS booking #{$targetWessId} during update: " . $cancelEx->getMessage());
+                            }
+                            $pSync->update(['status' => 'cancelled']);
+                        }
+                    }
+                }
+            }
+
             $wessAppointment = $wessClient->bookAppointment($branchId, $bookingPayload);
 
             // Persist synced appointment record to prevent duplicate loops
             if (!empty($wessAppointment['id']) && $appointmentId) {
                 $syncHash = md5($apptDate . ($wessAppointment['status'] ?? 'Request') . $serviceId . $customer['id']);
+
+                // If this was an update, mark the prior WESS booking as cancelled
+                if (!empty($oldWessId) && $oldWessId !== (string) $wessAppointment['id']) {
+                    SyncedAppointment::where('location_id', $locationId)
+                        ->where('wess_appointment_id', (string) $oldWessId)
+                        ->update(['status' => 'cancelled']);
+                }
+
                 SyncedAppointment::updateOrCreate(
                     [
                         'location_id'         => $locationId,
@@ -592,12 +678,15 @@ class GhlWebhookController extends Controller
                 'method'          => 'POST',
                 'response_status' => 200,
                 'response_body'   => json_encode([
-                    'status'           => 'synced',
-                    'appointment_id'   => $appointmentId,
-                    'wess_customer'    => $customer,
-                    'wess_appointment' => $wessAppointment,
-                    'branch_id'        => $branchId,
-                    'start_time'       => $startTime,
+                    'status'                  => !empty($oldWessId) ? 'updated' : 'synced',
+                    'message'                 => !empty($oldWessId) ? "Appointment updated in WESS: rescheduled from booking #{$oldWessId} to #{$wessAppointment['id']}." : "Appointment booked in WESS #{$wessAppointment['id']}.",
+                    'appointment_id'          => $appointmentId,
+                    'old_wess_appointment_id' => $oldWessId,
+                    'wess_appointment_id'     => $wessAppointment['id'] ?? null,
+                    'wess_customer'           => $customer,
+                    'wess_appointment'        => $wessAppointment,
+                    'branch_id'               => $branchId,
+                    'start_time'              => $apptDate,
                 ]),
             ]);
 
@@ -679,10 +768,12 @@ class GhlWebhookController extends Controller
             $wessClient = new WessClient($config->api_token, $config->base_url);
             $branchId   = $config->branch_id ?: 1;
 
+            $isExistingCustomer = true;
             $customer = $wessClient->lookupCustomerByPhone($phone);
             $endpoint = "{$config->base_url}/customers/lookup/phone-number/" . preg_replace('/[^0-9]/', '', $phone);
 
             if (!$customer) {
+                $isExistingCustomer = false;
                 $endpoint = "{$config->base_url}/branches/{$branchId}/customers";
                 $phoneData = WessClient::parsePhoneNumber($phone);
                 $customer = $wessClient->createCustomer($branchId, [
@@ -697,12 +788,31 @@ class GhlWebhookController extends Controller
             // If customer has WESS ID and we have GHL ID, update GHL custom fields
             if (!empty($customer['id']) && !empty($ghlId)) {
                 try {
+                    $wessCode    = $customer['code'] ?? (string)$customer['id'];
+                    $salutation  = $customer['salutation'] ?? null;
+                    $gender      = $customer['customer_detail']['gender'] ?? ($customer['gender'] ?? null);
+                    $nric        = $customer['ic_no'] ?? null;
+                    $contactType = $isExistingCustomer ? 'Existing Member' : 'New Lead';
+                    $prefName    = $firstName ?: ($customer['first_name'] ?? null);
+                    $bdayMonth   = null;
+                    if (!empty($contact['dateOfBirth'])) {
+                        $bdayMonth = date('F', strtotime($contact['dateOfBirth']));
+                    }
+
                     $ghlCalendarService = app(GhlCalendarService::class);
                     $ghlCalendarService->updateContactWessFields(
                         $locationId,
                         $ghlId,
-                        (string)$customer['id'],
-                        $customer['last_visit'] ?? null
+                        (string)$wessCode,
+                        $customer['last_visit'] ?? null,
+                        [
+                            'salutation'     => $salutation,
+                            'gender'         => $gender,
+                            'nric'           => $nric,
+                            'contact_type'   => $contactType,
+                            'birthday_month' => $bdayMonth,
+                            'preferred_name' => $prefName,
+                        ]
                     );
                 } catch (Exception $e) {
                     Log::warning("Could not update GHL custom fields for contact {$ghlId}: " . $e->getMessage());
