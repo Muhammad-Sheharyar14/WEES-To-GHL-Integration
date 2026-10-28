@@ -281,8 +281,8 @@ class WessClient
             $candidates[] = $rawDigits;            // 6596704307 (Online created format)
             $candidates[] = substr($rawDigits, 2); // 96704307 (Local 8-digit format)
         } 
-        // 2. If 8 digits starting with 8 or 9 (Singapore local mobile, e.g. 96704307)
-        elseif (strlen($rawDigits) === 8 && in_array($rawDigits[0], ['8', '9'])) {
+        // 2. If 8 digits (Singapore local number, e.g. 96704307, 86121073, 61234567)
+        elseif (strlen($rawDigits) === 8) {
             $candidates[] = "+65{$rawDigits}";     // +6596704307 (Existing desktop member format)
             $candidates[] = "65{$rawDigits}";      // 6596704307 (Online created format)
             $candidates[] = $rawDigits;            // 96704307 (Local format)
@@ -377,7 +377,103 @@ class WessClient
         // Clean up internal non-WESS aliases
         unset($data['phone_number'], $data['phone']);
 
+        // Normalize salutation to uppercase MR, MS, MRS, DR, MADAM per WESS validation
+        if (!empty($data['salutation'])) {
+            $sal = strtoupper(trim(str_replace('.', '', (string)$data['salutation'])));
+            $validSalutations = ['MR', 'MS', 'MRS', 'DR', 'MADAM'];
+            if (in_array($sal, $validSalutations)) {
+                $data['salutation'] = $sal;
+            } elseif ($sal === 'MISS') {
+                $data['salutation'] = 'MS';
+            } else {
+                unset($data['salutation']);
+            }
+        }
+
+        // Normalize gender into detail.gender ('M' or 'F') per WESS API v1.0.0 Section 3.5
+        if (!empty($data['gender'])) {
+            $g = strtoupper(trim((string)$data['gender']));
+            $gCode = null;
+            if (in_array($g, ['M', 'MALE', 'BOY', 'MAN'])) {
+                $gCode = 'M';
+            } elseif (in_array($g, ['F', 'FEMALE', 'GIRL', 'WOMAN'])) {
+                $gCode = 'F';
+            }
+            if ($gCode) {
+                if (!isset($data['detail']) || !is_array($data['detail'])) {
+                    $data['detail'] = [];
+                }
+                $data['detail']['gender'] = $gCode;
+            }
+            unset($data['gender']);
+        }
+
+        // Move any root-level detail fields into detail object per WESS API v1.0.0 Section 3.5
+        $detailKeys = [
+            'birthday_year', 'birthday_month', 'birthday_day',
+            'address_street', 'address_city', 'address_state', 'address_country', 'address_postcode',
+            'nationality', 'marital_status', 'occupation', 'race', 'religion',
+            'phone_home', 'phone_work', 'phone_other', 'phone_fax',
+        ];
+        foreach ($detailKeys as $dk) {
+            if (isset($data[$dk])) {
+                if (!isset($data['detail']) || !is_array($data['detail'])) {
+                    $data['detail'] = [];
+                }
+                if (!isset($data['detail'][$dk])) {
+                    $data['detail'][$dk] = $data[$dk];
+                }
+                unset($data[$dk]);
+            }
+        }
+
+        // Normalize detail.gender if present ('M' or 'F')
+        if (!empty($data['detail']['gender'])) {
+            $g = strtoupper(trim((string)$data['detail']['gender']));
+            if (in_array($g, ['M', 'MALE', 'BOY', 'MAN'])) {
+                $data['detail']['gender'] = 'M';
+            } elseif (in_array($g, ['F', 'FEMALE', 'GIRL', 'WOMAN'])) {
+                $data['detail']['gender'] = 'F';
+            } else {
+                unset($data['detail']['gender']);
+            }
+        }
+
+        // Normalize detail.marital_status if present ('S', 'M', 'D', 'W')
+        if (!empty($data['detail']['marital_status'])) {
+            $ms = strtoupper(trim((string)$data['detail']['marital_status']));
+            $msCode = match(true) {
+                in_array($ms, ['S', 'SINGLE', 'UNMARRIED']) => 'S',
+                in_array($ms, ['M', 'MARRIED'])             => 'M',
+                in_array($ms, ['D', 'DIVORCED'])            => 'D',
+                in_array($ms, ['W', 'WIDOWED', 'WIDOW'])    => 'W',
+                default                                     => null,
+            };
+            if ($msCode) {
+                $data['detail']['marital_status'] = $msCode;
+            } else {
+                unset($data['detail']['marital_status']);
+            }
+        }
+
+        // Mirror email under detail.email per WESS API v1.0.0 Section 3.5
+        if (!empty($data['email'])) {
+            if (!isset($data['detail']) || !is_array($data['detail'])) {
+                $data['detail'] = [];
+            }
+            if (empty($data['detail']['email'])) {
+                $data['detail']['email'] = $data['email'];
+            }
+        }
+
         $response = $this->request('POST', "{$this->baseUrl}/branches/{$branchId}/customers", [], $data);
+
+        // If WESS rejects with 403 due to restricted ic_no (Singapore PDPA NRIC permission restriction)
+        if ($response->status() === 403 && !empty($data['ic_no'])) {
+            Log::warning("WESS API returned 403 on customer creation with ic_no (NRIC permission restriction). Retrying without ic_no.");
+            unset($data['ic_no']);
+            $response = $this->request('POST', "{$this->baseUrl}/branches/{$branchId}/customers", [], $data);
+        }
 
         if (!$response->successful()) {
             $msg = $response->json('message') ?? $response->body();
@@ -451,20 +547,49 @@ class WessClient
     /**
      * Get therapists / employees available for a branch
      */
-    public function getEmployees(int|string $branchId): array
+    public function getEmployees(int|string $branchId, array $productIds = []): array
     {
-        $response = $this->request('GET', "{$this->baseUrl}/branches/{$branchId}/appointments/employees");
+        $params = [];
+        if (!empty($productIds)) {
+            foreach ($productIds as $idx => $id) {
+                $params["product_ids[{$idx}]"] = (int)$id;
+            }
+        }
+
+        $response = $this->request('GET', "{$this->baseUrl}/branches/{$branchId}/appointments/employees", $params);
 
         if (!$response->successful()) {
             return [];
         }
 
         $json = $response->json();
+        $employees = [];
         if (isset($json['data']) && is_array($json['data'])) {
-            return $json['data'];
+            $employees = $json['data'];
+        } elseif (is_array($json)) {
+            $employees = $json;
         }
 
-        return is_array($json) ? $json : [];
+        // Smart fallback: If empty and no productIds were provided, query with branch's online service product IDs
+        if (empty($employees) && empty($productIds)) {
+            try {
+                $services = $this->getServices($branchId);
+                $pIds = [];
+                foreach ($services as $s) {
+                    $pid = $s['id'] ?? ($s['product_id'] ?? null);
+                    if ($pid) {
+                        $pIds[] = (int)$pid;
+                    }
+                }
+                if (!empty($pIds)) {
+                    return $this->getEmployees($branchId, $pIds);
+                }
+            } catch (\Throwable $e) {
+                // Ignore fallback error
+            }
+        }
+
+        return $employees;
     }
 
 

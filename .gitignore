@@ -27,5 +27,8 @@ help/
 .agent/
 credentials.txt
 test_wess_api.php
+test_*.php
+public/test_*.php
+*.sql
 *.xlsx
 *.zip

@@ -39,7 +39,6 @@ class GhlCustomFieldTest extends TestCase
                     ['id' => 'field_salutation_777', 'name' => 'Salutation'],
                     ['id' => 'field_gender_666', 'name' => 'Gender'],
                     ['id' => 'field_nric_555', 'name' => 'NRIC'],
-                    ['id' => 'field_contact_type_444', 'name' => 'Contact Type'],
                     ['id' => 'field_bday_month_333', 'name' => 'Birthday Month'],
                     ['id' => 'field_pref_name_222', 'name' => 'Preferred Name'],
                 ]
@@ -54,7 +53,7 @@ class GhlCustomFieldTest extends TestCase
         $this->assertEquals('field_salutation_777', $fields['salutation_id']);
         $this->assertEquals('field_gender_666', $fields['gender_id']);
         $this->assertEquals('field_nric_555', $fields['nric_id']);
-        $this->assertEquals('field_contact_type_444', $fields['contact_type_id']);
+        $this->assertFalse(isset($fields['contact_type_id']), 'Contact Type custom field must not be created or tracked');
         $this->assertEquals('field_bday_month_333', $fields['birthday_month_id']);
         $this->assertEquals('field_pref_name_222', $fields['preferred_name_id']);
 
@@ -96,7 +95,7 @@ class GhlCustomFieldTest extends TestCase
         $this->assertEquals('new_id_salutation', $fields['salutation_id']);
         $this->assertEquals('new_id_gender', $fields['gender_id']);
         $this->assertEquals('new_id_nric', $fields['nric_id']);
-        $this->assertEquals('new_id_contact_type', $fields['contact_type_id']);
+        $this->assertFalse(isset($fields['contact_type_id']), 'Contact Type custom field must not be auto-created');
         $this->assertEquals('new_id_birthday_month', $fields['birthday_month_id']);
         $this->assertEquals('new_id_preferred_name', $fields['preferred_name_id']);
 
@@ -127,7 +126,7 @@ class GhlCustomFieldTest extends TestCase
                     ['id' => 'cf_salut_333', 'name' => 'Salutation'],
                     ['id' => 'cf_gend_444', 'name' => 'Gender'],
                     ['id' => 'cf_nric_555', 'name' => 'NRIC'],
-                    ['id' => 'cf_ctype_666', 'name' => 'Contact Type'],
+                    ['id' => 'cf_ctype_666', 'name' => 'Contact type'], // Martin's custom dropdown field
                     ['id' => 'cf_bmonth_777', 'name' => 'Birthday Month'],
                     ['id' => 'cf_pname_888', 'name' => 'Preferred Name'],
                 ]
@@ -146,9 +145,9 @@ class GhlCustomFieldTest extends TestCase
             '2026-10-09',
             [
                 'salutation'     => 'Ms',
-                'gender'         => 'F',
+                'gender'         => 'Female',
                 'nric'           => 'S1234567A',
-                'contact_type'   => 'Existing Member',
+                'contact_source' => 'Existing Member',
                 'birthday_month' => 'October',
                 'preferred_name' => 'Sherry',
             ]
@@ -160,8 +159,17 @@ class GhlCustomFieldTest extends TestCase
             if ($request->url() === "https://services.leadconnectorhq.com/contacts/{$contactId}" && $request->method() === 'PUT') {
                 $payload = $request->data();
                 $customFields = $payload['customFields'] ?? [];
-                // 2 core + 6 additional = 8 custom fields
-                return count($customFields) === 8
+                
+                // Assert native 'source' (CONTACT SOURCE) is set to 'Existing Member'
+                $this->assertEquals('Existing Member', $payload['source'] ?? null);
+
+                // Assert Martin's custom field 'cf_ctype_666' (Contact type) is NEVER sent or overwritten
+                foreach ($customFields as $cf) {
+                    $this->assertNotEquals('cf_ctype_666', $cf['id'], "Martin's custom Contact type field must not be overwritten");
+                }
+
+                // 2 core + 5 additional = 7 custom fields
+                return count($customFields) === 7
                     && $customFields[0]['id'] === 'cf_wess_111'
                     && $customFields[0]['field_value'] === 'WESS-CLIENT-007'
                     && $customFields[1]['id'] === 'cf_visit_222'

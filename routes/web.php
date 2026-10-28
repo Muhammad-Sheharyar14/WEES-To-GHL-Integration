@@ -50,6 +50,7 @@ Route::post('/api/custom-page/get', [CustomPageController::class, 'getCredential
 Route::post('/api/custom-page/save', [CustomPageController::class, 'saveCredentials'])->name('api.custom-page.save');
 Route::post('/api/custom-page/test', [CustomPageController::class, 'testConnection'])->name('api.custom-page.test');
 Route::post('/api/custom-page/toggle-sync', [CustomPageController::class, 'toggleSync'])->name('api.custom-page.toggle-sync');
+Route::post('/api/custom-page/override-sodt', [CustomPageController::class, 'overrideSodt'])->name('api.custom-page.override-sodt');
 Route::post('/api/custom-page/calendars', [CustomPageController::class, 'getCalendars'])->name('api.custom-page.calendars');
 Route::get('/api/custom-page/calendars', [CustomPageController::class, 'getCalendars']);
 Route::post('/api/custom-page/logs', [CustomPageController::class, 'getLogs'])->name('api.custom-page.logs');

@@ -78,12 +78,6 @@ class GhlCustomFieldService
             'placeholder' => 'NRIC / Passport / ID Number',
             'aliases'     => ['nric', 'ic no', 'ic_no', 'nric/fin', 'fin', 'id number'],
         ],
-        'contact_type' => [
-            'name'        => 'Contact Type',
-            'dataType'    => 'TEXT',
-            'placeholder' => 'Existing Member / New Lead',
-            'aliases'     => ['contact type', 'contact_type', 'customer type', 'client type'],
-        ],
         'birthday_month' => [
             'name'        => 'Birthday Month',
             'dataType'    => 'TEXT',
@@ -114,7 +108,7 @@ class GhlCustomFieldService
     {
         $cacheKey = "ghl_custom_fields_map_{$locationId}";
         $cached = Cache::get($cacheKey);
-        if ($cached && is_array($cached) && !empty($cached['wess_code_id']) && !empty($cached['last_visit_id'])) {
+        if ($cached && is_array($cached) && !empty($cached['wess_code_id'])) {
             return $cached;
         }
 
@@ -133,10 +127,20 @@ class GhlCustomFieldService
 
                 foreach ($customFields as $field) {
                     if (!is_array($field)) continue;
-                    $name    = strtolower(trim($field['name'] ?? ''));
                     $fieldId = $field['id'] ?? null;
-                    if ($fieldId && $name) {
+                    if (!$fieldId) continue;
+
+                    $name     = strtolower(trim($field['name'] ?? ($field['label'] ?? '')));
+                    $fieldKey = strtolower(trim($field['fieldKey'] ?? ($field['key'] ?? '')));
+
+                    if ($name) {
                         $existingFields[$name] = $fieldId;
+                    }
+                    if ($fieldKey) {
+                        $existingFields[$fieldKey] = $fieldId;
+                        if (str_starts_with($fieldKey, 'contact.')) {
+                            $existingFields[substr($fieldKey, 8)] = $fieldId;
+                        }
                     }
                 }
             } else {
@@ -252,14 +256,23 @@ class GhlCustomFieldService
             }
         }
 
-        if (empty($customFieldsPayload)) {
+        $contactPayload = [];
+        if (!empty($customFieldsPayload)) {
+            $contactPayload['customFields'] = $customFieldsPayload;
+        }
+
+        // Native CONTACT SOURCE in MiniChat X (Martin requirement: use CONTACT SOURCE, do not touch Contact type)
+        $sourceVal = $additionalFields['contact_source'] ?? $additionalFields['source'] ?? null;
+        if (!empty($sourceVal)) {
+            $contactPayload['source'] = (string) $sourceVal;
+        }
+
+        if (empty($contactPayload)) {
             return false;
         }
 
         try {
-            $res = $this->ghlRequest('PUT', "contacts/{$contactId}", $locationId, [
-                'customFields' => $customFieldsPayload,
-            ]);
+            $res = $this->ghlRequest('PUT', "contacts/{$contactId}", $locationId, $contactPayload);
 
             $success = in_array($res->status(), [200, 201]);
 
@@ -273,6 +286,7 @@ class GhlCustomFieldService
                     'wess_code'         => $wessCode,
                     'last_visit'        => $lastVisit,
                     'additional_fields' => array_keys($additionalFields),
+                    'source'            => $sourceVal,
                 ]);
             }
 

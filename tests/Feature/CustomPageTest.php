@@ -94,6 +94,17 @@ class CustomPageTest extends TestCase
         $resumedConfig = WessConfig::where('location_id', 'loc_ghl_999')->first();
         $this->assertTrue($resumedConfig->is_sync_enabled);
         $this->assertNotNull($resumedConfig->sync_paused_at, 'sync_paused_at must be preserved when toggled on to allow catch-up sync!');
+
+        // Toggle off again after 10 minutes: sync_paused_at should update to the fresh timestamp
+        $this->travel(10)->minutes();
+        $repauseResponse = $this->postJson('/api/custom-page/toggle-sync', [
+            'locationId'      => 'loc_ghl_999',
+            'is_sync_enabled' => false,
+        ]);
+        $repauseResponse->assertStatus(200);
+        $repausedConfig = WessConfig::where('location_id', 'loc_ghl_999')->first();
+        $this->assertFalse($repausedConfig->is_sync_enabled);
+        $this->assertEquals(now()->toDateTimeString(), $repausedConfig->sync_paused_at->toDateTimeString(), 'sync_paused_at should update to current time on subsequent toggle off!');
     }
 
     public function test_get_logs_endpoint_paginates_10_per_page(): void
@@ -413,5 +424,122 @@ class CustomPageTest extends TestCase
                 'message' => 'Log ID is required for retry.',
             ]);
     }
+
+    public function test_override_sodt_updates_timestamp_and_records_audit_log(): void
+    {
+        WessConfig::create([
+            'location_id'     => 'loc_sodt_test',
+            'api_token'       => 'test_tok',
+            'base_url'        => 'https://api.example.com',
+            'branch_id'       => 1,
+            'is_sync_enabled' => false,
+            'sync_paused_at'  => now()->subDays(2),
+        ]);
+
+        $targetDate = '2026-10-20T10:30:00';
+
+        $response = $this->postJson('/api/custom-page/override-sodt', [
+            'locationId'     => 'loc_sodt_test',
+            'sync_paused_at' => $targetDate,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+            ]);
+
+        $config = WessConfig::where('location_id', 'loc_sodt_test')->first();
+        $this->assertNotNull($config->sync_paused_at);
+        $this->assertEquals('2026-10-20 02:30:00', $config->sync_paused_at->toDateTimeString()); // Converted to UTC from SGT (+8)
+
+        $this->assertDatabaseHas('webhook_logs', [
+            'location_id'     => 'loc_sodt_test',
+            'event_type'      => 'SodtOverride',
+            'response_status' => 200,
+        ]);
+    }
+
+    public function test_override_sodt_clears_timestamp_when_empty(): void
+    {
+        WessConfig::create([
+            'location_id'     => 'loc_sodt_clear',
+            'api_token'       => 'test_tok',
+            'base_url'        => 'https://api.example.com',
+            'branch_id'       => 1,
+            'is_sync_enabled' => false,
+            'sync_paused_at'  => now(),
+        ]);
+
+        $response = $this->postJson('/api/custom-page/override-sodt', [
+            'locationId'     => 'loc_sodt_clear',
+            'sync_paused_at' => '',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success'        => true,
+                'sync_paused_at' => null,
+            ]);
+
+        $config = WessConfig::where('location_id', 'loc_sodt_clear')->first();
+        $this->assertNull($config->sync_paused_at);
+
+        $this->assertDatabaseHas('webhook_logs', [
+            'location_id'     => 'loc_sodt_clear',
+            'event_type'      => 'SodtReset',
+            'response_status' => 200,
+        ]);
+    }
+
+    public function test_override_sodt_validates_required_location_id(): void
+    {
+        $response = $this->postJson('/api/custom-page/override-sodt', [
+            'sync_paused_at' => '2026-10-20T10:00:00',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Location ID is required.',
+            ]);
+    }
+
+    public function test_non_admin_user_role_is_forbidden_from_custom_page_api(): void
+    {
+        WessConfig::create([
+            'location_id'     => 'loc_staff_test',
+            'api_token'       => 'test_token',
+            'is_sync_enabled' => true,
+            'is_connected'    => true,
+        ]);
+
+        // 1. getCredentials rejected for regular staff user
+        $response = $this->postJson('/api/custom-page/get', [
+            'locationId' => 'loc_staff_test',
+            'user_role'  => 'user',
+        ]);
+        $response->assertStatus(403)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Access denied. Administrator privileges are required to view or modify WESS settings.',
+            ]);
+
+        // 2. toggleSync rejected for regular staff user
+        $response = $this->postJson('/api/custom-page/toggle-sync', [
+            'locationId'      => 'loc_staff_test',
+            'is_sync_enabled' => false,
+            'user_role'       => 'user',
+        ]);
+        $response->assertStatus(403);
+
+        // 3. Admin user allowed as normal
+        $response = $this->postJson('/api/custom-page/get', [
+            'locationId' => 'loc_staff_test',
+            'user_role'  => 'admin',
+        ]);
+        $response->assertStatus(200)
+            ->assertJson(['success' => true]);
+    }
 }
+
 

@@ -32,6 +32,22 @@ class CustomPageController extends Controller
     }
 
     /**
+     * Defense-in-depth: Block requests from non-admin users (such as staff members with role 'user')
+     */
+    protected function ensureAdminRole(Request $request): ?\Illuminate\Http\JsonResponse
+    {
+        $role = strtolower((string)($request->input('user_role') ?: $request->input('role') ?: $request->input('userRole')));
+        if ($role === 'user') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Access denied. Administrator privileges are required to view or modify WESS settings.',
+            ], 403);
+        }
+
+        return null;
+    }
+
+    /**
      * Initialize / fetch account status, CRM tokens, and WESS credentials.
      * 1. Check if account already has a valid token (auto-refresh if expired).
      * 2. If an Agency token exists, resolve an Account token.
@@ -39,6 +55,10 @@ class CustomPageController extends Controller
      */
     public function getCredentials(Request $request)
     {
+        if ($denied = $this->ensureAdminRole($request)) {
+            return $denied;
+        }
+
         $locationId = $request->input('locationId') ?: $request->input('location_id');
         $companyId  = $request->input('companyId') ?: $request->input('company_id');
 
@@ -98,6 +118,9 @@ class CustomPageController extends Controller
             'token_error'     => $tokenError,
             'is_verified'     => $config ? (bool)$config->is_connected : false,
             'is_sync_enabled' => $config ? (bool)$config->is_sync_enabled : false,
+            'sync_paused_at'  => $config && $config->sync_paused_at ? $config->sync_paused_at->toIso8601String() : null,
+            'sync_paused_at_formatted' => $config && $config->sync_paused_at ? $config->sync_paused_at->setTimezone('Asia/Singapore')->format('d M Y, h:i A') : null,
+            'sync_paused_at_input'     => $config && $config->sync_paused_at ? $config->sync_paused_at->setTimezone('Asia/Singapore')->format('Y-m-d\TH:i') : null,
             'credentials'     => [
                 'api_token'        => $config ? $config->api_token : '',
                 'base_url'         => $config ? $config->base_url : '',
@@ -109,6 +132,9 @@ class CustomPageController extends Controller
                 'is_sync_enabled'  => $config ? (bool)$config->is_sync_enabled : false,
                 'is_connected'     => $config ? (bool)$config->is_connected : false,
                 'last_synced_at'   => $config && $config->last_synced_at ? $config->last_synced_at->toIso8601String() : null,
+                'sync_paused_at'   => $config && $config->sync_paused_at ? $config->sync_paused_at->toIso8601String() : null,
+                'sync_paused_at_formatted' => $config && $config->sync_paused_at ? $config->sync_paused_at->setTimezone('Asia/Singapore')->format('d M Y, h:i A') : null,
+                'sync_paused_at_input'     => $config && $config->sync_paused_at ? $config->sync_paused_at->setTimezone('Asia/Singapore')->format('Y-m-d\TH:i') : null,
             ],
             'branches'        => $branches,
             'calendars'       => $calendars,
@@ -120,6 +146,10 @@ class CustomPageController extends Controller
      */
     public function testConnection(Request $request)
     {
+        if ($denied = $this->ensureAdminRole($request)) {
+            return $denied;
+        }
+
         $validated = $request->validate([
             'api_token' => 'required|string',
             'base_url'  => 'required|url',
@@ -161,6 +191,10 @@ class CustomPageController extends Controller
      */
     public function saveCredentials(Request $request)
     {
+        if ($denied = $this->ensureAdminRole($request)) {
+            return $denied;
+        }
+
         $locationId = $request->input('locationId') ?: $request->input('location_id');
         $companyId  = $request->input('companyId') ?: $request->input('company_id');
         $apiToken   = trim($request->input('api_token') ?? '');
@@ -271,6 +305,10 @@ class CustomPageController extends Controller
      */
     public function getCalendars(Request $request)
     {
+        if ($denied = $this->ensureAdminRole($request)) {
+            return $denied;
+        }
+
         $locationId = $request->input('locationId') ?: $request->input('location_id');
 
         if (empty($locationId)) {
@@ -302,6 +340,10 @@ class CustomPageController extends Controller
      */
     public function toggleSync(Request $request)
     {
+        if ($denied = $this->ensureAdminRole($request)) {
+            return $denied;
+        }
+
         $locationId = $request->input('locationId') ?: $request->input('location_id');
         $companyId  = $request->input('companyId') ?: $request->input('company_id');
         $enabled    = $request->boolean('is_sync_enabled');
@@ -319,22 +361,109 @@ class CustomPageController extends Controller
         }
         $config->is_sync_enabled = $enabled;
 
-        // When toggling OFF, record the exact timestamp sync stopped
+        // When toggling OFF, record the exact current timestamp sync stopped
         if (!$enabled) {
-            if (!$config->sync_paused_at) {
-                $config->sync_paused_at = now();
-            }
+            $config->sync_paused_at = now();
         }
         // When toggling ON, keep sync_paused_at intact so the upcoming sync executes catch-up recovery
 
         $config->save();
 
         return response()->json([
-            'success'         => true,
-            'is_sync_enabled' => (bool)$config->is_sync_enabled,
-            'message'         => $config->is_sync_enabled 
+            'success'                  => true,
+            'is_sync_enabled'          => (bool)$config->is_sync_enabled,
+            'sync_paused_at'           => $config->sync_paused_at ? $config->sync_paused_at->toIso8601String() : null,
+            'sync_paused_at_formatted' => $config->sync_paused_at ? $config->sync_paused_at->setTimezone('Asia/Singapore')->format('d M Y, h:i A') : null,
+            'sync_paused_at_input'     => $config->sync_paused_at ? $config->sync_paused_at->setTimezone('Asia/Singapore')->format('Y-m-d\TH:i') : null,
+            'message'                  => $config->is_sync_enabled 
                 ? ($config->is_connected ? 'Sync is now ACTIVE for this account.' : 'Sync is enabled. (Will sync once WESS credentials are saved below).') 
                 : 'Sync is now PAUSED for this account.',
+        ]);
+    }
+
+    /**
+     * Override / Update the Switched Off Date & Time (SODT) for Catch-Up Sync
+     */
+    public function overrideSodt(Request $request)
+    {
+        if ($denied = $this->ensureAdminRole($request)) {
+            return $denied;
+        }
+
+        $locationId = $request->input('locationId') ?: $request->input('location_id');
+        $sodtInput  = $request->input('sync_paused_at') ?: $request->input('sodt');
+
+        if (empty($locationId)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Location ID is required.'
+            ], 422);
+        }
+
+        $config = WessConfig::firstOrNew(['location_id' => $locationId]);
+
+        if (empty($sodtInput)) {
+            $config->sync_paused_at = null;
+            $config->save();
+
+            WebhookLog::create([
+                'source'          => 'custom_page',
+                'location_id'     => $locationId,
+                'event_type'      => 'SodtReset',
+                'endpoint'        => '/api/custom-page/override-sodt',
+                'method'          => 'POST',
+                'payload'         => ['action' => 'reset_sodt'],
+                'response_status' => 200,
+                'response_body'   => json_encode(['message' => 'Switched Off Date & Time reset to null by staff']),
+            ]);
+
+            return response()->json([
+                'success'                  => true,
+                'message'                  => 'Switched Off Date & Time (SODT) cleared successfully.',
+                'sync_paused_at'           => null,
+                'sync_paused_at_formatted' => null,
+                'sync_paused_at_input'     => null,
+            ]);
+        }
+
+        try {
+            // Support both ISO format with timezone and local datetime strings (assume Singapore time if no tz at end)
+            $parsedDate = preg_match('/(?:Z|[+\-]\d{2}(?::?\d{2})?)$/i', trim($sodtInput))
+                ? \Carbon\Carbon::parse($sodtInput)->setTimezone('UTC')
+                : \Carbon\Carbon::parse($sodtInput, 'Asia/Singapore')->setTimezone('UTC');
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid date format provided for SODT: ' . $e->getMessage()
+            ], 422);
+        }
+
+        $config->sync_paused_at = $parsedDate;
+        $config->save();
+
+        WebhookLog::create([
+            'source'          => 'custom_page',
+            'location_id'     => $locationId,
+            'event_type'      => 'SodtOverride',
+            'endpoint'        => '/api/custom-page/override-sodt',
+            'method'          => 'POST',
+            'payload'         => [
+                'provided_sodt' => $sodtInput,
+                'parsed_utc'    => $parsedDate->toDateTimeString(),
+            ],
+            'response_status' => 200,
+            'response_body'   => json_encode([
+                'message'  => 'Switched Off Date & Time overridden by staff',
+                'new_sodt' => $parsedDate->toIso8601String(),
+            ]),
+        ]);
+
+        return response()->json([
+            'success'                  => true,
+            'message'                  => 'Switched Off Date & Time (SODT) updated successfully to ' . $parsedDate->setTimezone('Asia/Singapore')->format('d M Y, h:i A') . ' (SGT).',
+            'sync_paused_at'           => $parsedDate->toIso8601String(),
+            'sync_paused_at_formatted' => $parsedDate->setTimezone('Asia/Singapore')->format('d M Y, h:i A'),
+            'sync_paused_at_input'     => $parsedDate->setTimezone('Asia/Singapore')->format('Y-m-d\TH:i'),
         ]);
     }
 
@@ -343,6 +472,10 @@ class CustomPageController extends Controller
      */
     public function getLogs(Request $request)
     {
+        if ($denied = $this->ensureAdminRole($request)) {
+            return $denied;
+        }
+
         $locationId = $request->input('locationId') ?: $request->input('location_id');
         $page       = max((int) $request->input('page', 1), 1);
         $search     = trim((string) $request->input('search', ''));
@@ -435,6 +568,10 @@ class CustomPageController extends Controller
      */
     public function retryLog(Request $request)
     {
+        if ($denied = $this->ensureAdminRole($request)) {
+            return $denied;
+        }
+
         $logId      = $request->input('log_id') ?: $request->input('id');
         $locationId = $request->input('locationId') ?: $request->input('location_id');
 

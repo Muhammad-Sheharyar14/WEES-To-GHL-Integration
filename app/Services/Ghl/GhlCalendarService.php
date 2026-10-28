@@ -761,6 +761,45 @@ class GhlCalendarService
     }
 
     /**
+     * Cancel or delete an appointment on the CRM calendar
+     */
+    public function cancelAppointmentInGhl(string $locationId, string $ghlAppointmentId): bool
+    {
+        try {
+            // Echo Loop Prevention: Tag cancelled CRM appointment in cache for 45s
+            Cache::put("wess_origin_appt_{$ghlAppointmentId}", true, now()->addSeconds(45));
+
+            // 1. Try deleting via appointment endpoint
+            $delRes = $this->ghlRequest('DELETE', "calendars/events/appointments/{$ghlAppointmentId}", $locationId);
+            if ($delRes->successful() || $delRes->status() === 404) {
+                Log::info("Successfully deleted CRM appointment {$ghlAppointmentId} after WESS cancellation.");
+                return true;
+            }
+
+            // 2. Try deleting via block-slots endpoint
+            $blockDel = $this->ghlRequest('DELETE', "calendars/events/block-slots/{$ghlAppointmentId}", $locationId);
+            if ($blockDel->successful() || $blockDel->status() === 404) {
+                Log::info("Successfully deleted CRM block-slot {$ghlAppointmentId} after WESS cancellation.");
+                return true;
+            }
+
+            // 3. Fallback: Update status to 'cancelled'
+            $putRes = $this->ghlRequest('PUT', "calendars/events/appointments/{$ghlAppointmentId}", $locationId, [
+                'appointmentStatus' => 'cancelled',
+            ]);
+            if ($putRes->successful() || $putRes->status() === 404) {
+                Log::info("Successfully updated CRM appointment {$ghlAppointmentId} status to 'cancelled'.");
+                return true;
+            }
+
+            return false;
+        } catch (\Throwable $e) {
+            Log::warning("Could not cancel CRM appointment {$ghlAppointmentId}: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Add tags to a GHL Contact (Excel / CRM organization)
      */
     public function addContactTags(string $locationId, string $contactId, array $tags = ['WESS']): bool

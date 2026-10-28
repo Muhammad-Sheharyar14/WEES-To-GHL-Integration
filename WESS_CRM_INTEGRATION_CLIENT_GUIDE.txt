@@ -90,13 +90,13 @@ Heading 2: Fields Synchronized Automatically into MiniChat X
 1. WESS Member Code: The official customer ID code in WESS (e.g. C006071).
 2. Last Visit Date: The date the customer last received a treatment or attended an appointment.
 3. Salutation: Title (e.g. Mr, Mrs, Ms, Miss, Dr) from WESS.
-4. Gender: M or F from WESS customer details.
+4. Gender: None, Male, or Female (exact un-modified value directly from WESS customer details).
 5. NRIC / ID: Identity card or passport number recorded in WESS.
-6. Contact Type: Automatically classified as 'Existing Member' if found in WESS, or 'New Lead' if new.
+6. Contact Source (Native MiniChat X Field): Automatically populated as 'Existing Member' if found in WESS, or 'New Lead' if new (does not create or affect custom Contact type fields).
 7. Preferred Name: Customer's preferred or first name.
 8. Birthday Month: Calculated automatically (e.g. 'October') whenever date of birth is present.
 
-[SCREENSHOT: MiniChat X Contact Details panel showing the custom fields populated: WESS Code, Last Visit, Contact Type, NRIC, Gender]
+[SCREENSHOT: MiniChat X Contact Details panel showing the custom fields populated: WESS Code, Last Visit, NRIC, Gender and CONTACT SOURCE]
 
 
 Heading 1: System Limitations & Architectural Facts (With WESS API Documentation Proofs)

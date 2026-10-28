@@ -165,10 +165,26 @@ class GhlWebhookController extends Controller
             $notes         = (string)($appointment['notes'] ?? $payload['notes'] ?? ($payload['appointment']['notes'] ?? ''));
             $title         = (string)($appointment['title'] ?? $payload['title'] ?? ($payload['appointment']['title'] ?? ''));
             $startTime     = $appointment['startTime'] ?? $payload['startTime'] ?? ($payload['appointmentStartTime'] ?? null);
+            $endTime       = $appointment['endTime'] ?? $payload['endTime'] ?? ($payload['appointmentEndTime'] ?? null);
             $phone         = $appointment['phone'] ?? $payload['phone'] ?? ($payload['contact']['phone'] ?? '');
             $firstName     = $appointment['firstName'] ?? $payload['firstName'] ?? ($payload['contact']['firstName'] ?? '');
             $lastName      = $appointment['lastName'] ?? $payload['lastName'] ?? ($payload['contact']['lastName'] ?? '');
             $email         = $appointment['email'] ?? $payload['email'] ?? ($payload['contact']['email'] ?? '');
+
+            // Calculate appointment duration in minutes
+            $durationMinutes = 60;
+            if (!empty($appointment['duration']) && is_numeric($appointment['duration'])) {
+                $durationMinutes = (int) $appointment['duration'];
+            } elseif (!empty($startTime) && !empty($endTime)) {
+                try {
+                    $diffMins = Carbon::parse($startTime)->diffInMinutes(Carbon::parse($endTime));
+                    if ($diffMins > 0) {
+                        $durationMinutes = (int) $diffMins;
+                    }
+                } catch (\Throwable $diffEx) {
+                    $durationMinutes = 60;
+                }
+            }
 
             // Echo Loop Prevention (3-Tier Protection):
             // When WESS sync pushes an appointment to GHL, GHL triggers AppointmentCreate / AppointmentUpdate.
@@ -384,12 +400,14 @@ class GhlWebhookController extends Controller
             // Ensure default start time if not present
             $startTime = $startTime ?? now()->addDay()->format('Y-m-d 10:00:00');
 
-            // If phone is missing but contactId is present, fetch contact directly from GHL API
-            if (empty($phone) && !empty($contactId)) {
+            // Ensure contact data is resolved (including customFields) to inspect WESS Code
+            $contactData = $appointment['contact'] ?? ($payload['contact'] ?? null);
+            if (!empty($contactId) && (empty($contactData) || empty($contactData['customFields']))) {
                 try {
                     $ghlCalendarService = app(GhlCalendarService::class);
                     $ghlContact = $ghlCalendarService->getContact($locationId, $contactId);
                     if ($ghlContact) {
+                        $contactData = array_merge($contactData ?? [], $ghlContact);
                         $phone     = $ghlContact['phone'] ?? $phone;
                         $firstName = $ghlContact['firstName'] ?? $firstName;
                         $lastName  = $ghlContact['lastName'] ?? $lastName;
@@ -400,42 +418,120 @@ class GhlWebhookController extends Controller
                 }
             }
 
-            // If phone is still missing, cannot book in WESS without customer phone number
-            if (empty($phone)) {
-                Log::warning("Appointment {$appointmentId} has no contact phone number. Skipping WESS booking push.");
+            $apptFullName = trim(($firstName ?: '') . ' ' . ($lastName ?: ''));
+            if (empty($apptFullName) && !empty($contactData['name'])) {
+                $apptFullName = trim($contactData['name']);
+            }
+            $cleanPhone       = preg_replace('/[^0-9]/', '', (string)$phone);
+            $cleanNameLetters = preg_replace('/[^\p{L}]/u', '', (string)$apptFullName);
+
+            // If phone is missing or invalid, cannot book in WESS without customer phone number
+            if (empty($cleanPhone) || strlen($cleanPhone) < 7) {
+                Log::warning("Appointment {$appointmentId} has no valid contact phone number. Skipping WESS booking push.");
                 $log->update([
                     'response_status' => 200,
                     'response_body'   => json_encode([
                         'status'  => 'skipped',
-                        'message' => 'Contact phone number is missing in CRM. WESS requires a customer phone number to book.',
+                        'message' => 'Contact phone number is missing or invalid in CRM. WESS requires a customer phone number to book.',
                     ]),
                 ]);
                 return;
             }
 
-            // 1. Lookup or Create Customer in WESS
-            $isExistingCustomer = true;
-            $customer = $wessClient->lookupCustomerByPhone($phone);
+            // CHECK 1: Check if MiniChat contact ALREADY has a "WESS Code"
+            $wessCodeFieldId = Cache::get("ghl_custom_fields_map_{$locationId}")['wess_code_id'] ?? null;
+            $existingWessCode = $this->extractFieldValue(
+                $payload,
+                $contactData,
+                ['wess_code', 'wessCode', 'customer_code', 'customerCode'],
+                ['wess code', 'wess_code', 'wesscode', 'customer code', 'wess customer code', 'wess id'],
+                $wessCodeFieldId
+            );
 
-            if (!$customer) {
+            $customer = null;
+            $isExistingCustomer = false;
+
+            if (!empty($existingWessCode)) {
+                $isExistingCustomer = true;
+                Log::info("Contact {$contactId} already has WESS Code '{$existingWessCode}' in CRM. Customer creation in WESS is strictly blocked.");
+
+                // Resolve customer details from WESS by phone
+                if (!empty($phone)) {
+                    $customer = $wessClient->lookupCustomerByPhone($phone);
+                }
+
+                // If not resolved by phone, but existingWessCode is numeric, fetch by ID
+                if (!$customer && is_numeric($existingWessCode)) {
+                    try {
+                        $customer = $wessClient->getCustomer($branchId, $existingWessCode);
+                    } catch (\Throwable $e) {
+                        $customer = [
+                            'id'   => (int)$existingWessCode,
+                            'code' => (string)$existingWessCode,
+                        ];
+                    }
+                }
+
+                // If existingWessCode is alphanumeric (e.g. C006081) and phone did not match, try branch customer search
+                if (!$customer && !empty($existingWessCode)) {
+                    try {
+                        $branchCusts = $wessClient->getBranchCustomers($branchId, ['filter[code]' => $existingWessCode], false);
+                        if (!empty($branchCusts['data'][0])) {
+                            $customer = $branchCusts['data'][0];
+                        } elseif (!empty($branchCusts[0])) {
+                            $customer = $branchCusts[0];
+                        }
+                    } catch (\Throwable $e) {
+                        // Ignore if branch customers search endpoint is not accessible
+                    }
+                }
+
+                if (!$customer && is_numeric($existingWessCode)) {
+                    $customer = ['id' => (int)$existingWessCode, 'code' => (string)$existingWessCode];
+                }
+            }
+
+            // CHECK 2: If no WESS Code in CRM, check WESS by ALL phone number formats (+65, 65, 8-digit)
+            if (!$customer && !empty($phone)) {
+                $customer = $wessClient->lookupCustomerByPhone($phone);
+                if ($customer) {
+                    $isExistingCustomer = true;
+                    Log::info("Found existing WESS customer ID {$customer['id']} (Code: " . ($customer['code'] ?? 'none') . ") by phone {$phone}. Skipping customer creation.");
+                }
+            }
+
+            // CHECK 3: ONLY create customer if NEITHER Check 1 NOR Check 2 found an existing customer
+            if (!$customer && empty($existingWessCode)) {
+                // Customer must have BOTH a valid name and phone number to create a new customer record in WESS
+                if (empty($cleanPhone) || strlen($cleanPhone) < 7 || empty(trim($apptFullName)) || empty($cleanNameLetters)) {
+                    $reason = (empty($cleanPhone) || strlen($cleanPhone) < 7)
+                        ? 'Missing or invalid phone number'
+                        : 'Missing or invalid contact name (contact must have a valid name containing letters)';
+
+                    Log::warning("Skipped WESS customer creation for appointment {$appointmentId}: Contact lacks both valid name and phone ({$reason}, Name: '{$apptFullName}', Phone: '{$phone}').");
+                    $log->update([
+                        'response_status' => 200,
+                        'response_body'   => json_encode([
+                            'status'  => 'skipped',
+                            'message' => "Skipped: Contact must have both a valid name and phone number to create a customer in WESS. ({$reason})",
+                        ]),
+                    ]);
+                    return;
+                }
+
                 $isExistingCustomer = false;
-                $phoneData = WessClient::parsePhoneNumber($phone);
-                $customer = $wessClient->createCustomer($branchId, [
-                    'first_name'                => $firstName ?: 'Customer',
-                    'last_name'                 => $lastName ?: '',
-                    'phone_mobile_country_code' => $phoneData['country_code'],
-                    'phone_mobile'              => $phoneData['mobile'],
-                    'email'                     => $email ?: '',
-                ]);
+                $customerPayload = $this->buildWessCustomerPayload($payload, $contactData ?? $appointment);
+                $customer = $wessClient->createCustomer($branchId, $customerPayload);
+                Log::info("Created new WESS customer ID {$customer['id']} (Code: " . ($customer['code'] ?? 'none') . ") for verified new lead {$phone}.");
             }
 
             if (empty($customer['id'])) {
-                Log::error("Failed to lookup or create WESS customer for phone {$phone}.");
+                Log::warning("Could not resolve numeric WESS customer ID for contact {$contactId} (WESS Code: '{$existingWessCode}'). Skipping WESS booking push to prevent customer duplication.");
                 $log->update([
                     'response_status' => 200,
                     'response_body'   => json_encode([
-                        'status'  => 'failed',
-                        'message' => "Failed to resolve or create customer in WESS for phone {$phone}.",
+                        'status'  => 'skipped',
+                        'message' => "Contact has WESS Code '{$existingWessCode}' but numeric customer ID could not be resolved from WESS. Customer creation was aborted to prevent duplicate records.",
                     ]),
                 ]);
                 return;
@@ -444,16 +540,85 @@ class GhlWebhookController extends Controller
             // Update GHL Contact custom fields (WESS Code, Last Visit, Salutation, Gender, NRIC, Contact Type, etc.)
             if (!empty($customer['id']) && !empty($contactId)) {
                 try {
-                    $lastVisitDate = !empty($startTime) ? date('Y-m-d', strtotime($startTime)) : null;
-                    $wessCode      = $customer['code'] ?? (string)$customer['id'];
-                    $salutation    = $customer['salutation'] ?? null;
-                    $gender        = $customer['customer_detail']['gender'] ?? ($customer['gender'] ?? null);
-                    $nric          = $customer['ic_no'] ?? null;
+                    // Resolve WESS Code: Prioritize actual alphanumeric salon member code (e.g. C006081)
+                    $wessCode = $customer['code'] ?? ($customer['customer_code'] ?? null);
+
+                    // If existing contact in CRM already had an alphanumeric code, preserve it
+                    if (empty($wessCode) && !empty($existingWessCode) && !is_numeric($existingWessCode)) {
+                        $wessCode = $existingWessCode;
+                    }
+
+                    // If code is missing or purely numeric, fetch customer details from WESS to get the real member code
+                    if ((empty($wessCode) || is_numeric($wessCode)) && !empty($customer['id'])) {
+                        try {
+                            $custDetails = $wessClient->getCustomer($branchId, $customer['id']);
+                            if (!empty($custDetails['code'])) {
+                                $wessCode = $custDetails['code'];
+                            } elseif (!empty($custDetails['customer_code'])) {
+                                $wessCode = $custDetails['customer_code'];
+                            }
+                        } catch (\Throwable $e) {
+                            Log::debug("Could not fetch customer code for ID {$customer['id']}: " . $e->getMessage());
+                        }
+                    }
+
+                    // Never overwrite a valid existing alphanumeric WESS code with a purely numeric ID
+                    if (is_numeric($wessCode) && !empty($existingWessCode) && !is_numeric($existingWessCode)) {
+                        $wessCode = $existingWessCode;
+                    }
+
+                    // If code is still purely numeric (internal database ID), do not push it as a WESS Code to CRM
+                    if (is_numeric($wessCode)) {
+                        $wessCode = !empty($existingWessCode) && !is_numeric($existingWessCode) ? $existingWessCode : null;
+                    }
+                    $salutation    = !empty($customer['salutation']) ? $customer['salutation'] : ($this->extractFieldValue(
+                        $payload,
+                        $contact,
+                        ['salutation', 'title'],
+                        ['salutation', 'title', 'wess salutation']
+                    ) ?? null);
+
+                    $rawGender     = $customer['customer_detail']['gender'] ?? ($customer['gender'] ?? null);
+                    if (empty($rawGender)) {
+                        $rawGender = $this->extractGenderFromPayload($payload, $contact);
+                    }
+                    $gender        = null;
+                    if ($rawGender !== null && $rawGender !== '') {
+                        $upper = strtoupper(trim((string)$rawGender));
+                        if ($upper === 'M' || $upper === 'MALE') {
+                            $gender = 'Male';
+                        } elseif ($upper === 'F' || $upper === 'FEMALE') {
+                            $gender = 'Female';
+                        } else {
+                            $gender = (string)$rawGender;
+                        }
+                    }
+
+                    $nric          = !empty($customer['ic_no']) ? $customer['ic_no'] : ($this->extractFieldValue(
+                        $payload,
+                        $contact,
+                        ['ic_no', 'nric', 'passport', 'id_number', 'nric_fin'],
+                        ['nric', 'ic no', 'ic_no', 'nric/fin', 'fin', 'id number', 'passport', 'id no']
+                    ) ?? null);
+
                     $contactType   = $isExistingCustomer ? 'Existing Member' : 'New Lead';
-                    $prefName      = $firstName ?: ($customer['first_name'] ?? null);
+
+                    $prefName      = $this->extractFieldValue(
+                        $payload,
+                        $contact,
+                        ['preferred_name', 'preferredName', 'nickname'],
+                        ['preferred name', 'nickname', 'pref name']
+                    ) ?? ($firstName ?: ($customer['first_name'] ?? null));
+
                     $bdayMonth     = null;
-                    if (!empty($contact['dateOfBirth'])) {
-                        $bdayMonth = date('F', strtotime($contact['dateOfBirth']));
+                    $dob           = $contact['dateOfBirth'] ?? ($contact['date_of_birth'] ?? ($payload['dateOfBirth'] ?? null));
+                    if (!empty($dob)) {
+                        $bdayMonth = date('F', strtotime($dob));
+                    } elseif (!empty($customer['customer_detail']['birthday_month'])) {
+                        $monthNum = (int)$customer['customer_detail']['birthday_month'];
+                        if ($monthNum >= 1 && $monthNum <= 12) {
+                            $bdayMonth = date('F', mktime(0, 0, 0, $monthNum, 1));
+                        }
                     }
 
                     app(\App\Services\Ghl\GhlCustomFieldService::class)->updateContactCustomFields(
@@ -465,7 +630,7 @@ class GhlWebhookController extends Controller
                             'salutation'     => $salutation,
                             'gender'         => $gender,
                             'nric'           => $nric,
-                            'contact_type'   => $contactType,
+                            'contact_source' => $contactType,
                             'birthday_month' => $bdayMonth,
                             'preferred_name' => $prefName,
                         ]
@@ -639,6 +804,97 @@ class GhlWebhookController extends Controller
                 }
             }
 
+            // Layer 4: Real-Time Slot Availability Check in WESS
+            // Verify that the requested therapist is not already booked in WESS during this time window.
+            $assignedEmpId = $bookingPayload['employee_id'] ?? null;
+            $reqStart = Carbon::parse($apptDate, $branchTz);
+            $reqEnd   = (clone $reqStart)->addMinutes($durationMinutes);
+
+            try {
+                $checkDateFrom = (clone $reqStart)->startOfDay()->setTimezone('UTC')->format('Y-m-d H:i:s');
+                $checkDateTo   = (clone $reqStart)->endOfDay()->setTimezone('UTC')->format('Y-m-d H:i:s');
+
+                $candidateAppts = $wessClient->getAppointments($branchId, [
+                    'filter' => [
+                        'date_from' => $checkDateFrom,
+                        'date_to'   => $checkDateTo,
+                    ],
+                    'per_page' => 100,
+                ], false, 100);
+
+                if (is_array($candidateAppts)) {
+                    $conflict = null;
+                    $priorIds = !empty($priorActiveSyncs)
+                        ? $priorActiveSyncs->pluck('wess_appointment_id')->map(fn($v) => (string)$v)->all()
+                        : [];
+
+                    foreach ($candidateAppts as $cAppt) {
+                        if (!is_array($cAppt) || empty($cAppt['date'])) {
+                            continue;
+                        }
+
+                        $cStatus = strtolower(trim($cAppt['status'] ?? ''));
+                        // Skip cancelled appointments
+                        if (in_array($cStatus, ['cancelled', 'cancel', 'last minute cancel', 'no show'])) {
+                            continue;
+                        }
+
+                        $cId = (string)($cAppt['id'] ?? '');
+                        // Exclude the current appointment being rescheduled (old WESS booking ID or prior active IDs)
+                        if (!empty($oldWessId) && $cId === (string)$oldWessId) {
+                            continue;
+                        }
+                        if (in_array($cId, $priorIds, true)) {
+                            continue;
+                        }
+
+                        // If a specific therapist is assigned, check if this therapist is assigned to the candidate appointment
+                        if ($assignedEmpId !== null) {
+                            $empIds = array_column($cAppt['employees'] ?? [], 'id');
+                            if (!in_array($assignedEmpId, $empIds)) {
+                                continue;
+                            }
+                        }
+
+                        $cStart = Carbon::parse($cAppt['date'])->setTimezone($branchTz);
+                        $cDuration = !empty($cAppt['processing_time']) ? (int)$cAppt['processing_time'] : 60;
+                        $cEnd = (clone $cStart)->addMinutes($cDuration);
+
+                        // Interval overlap check: reqStart < cEnd && reqEnd > cStart
+                        if ($reqStart->lt($cEnd) && $reqEnd->gt($cStart)) {
+                            $conflict = [
+                                'wess_appointment_id' => $cId,
+                                'customer_name'       => trim(($cAppt['customer']['first_name'] ?? '') . ' ' . ($cAppt['customer']['last_name'] ?? '')),
+                                'start_time'          => $cStart->format('Y-m-d H:i:s'),
+                                'end_time'            => $cEnd->format('Y-m-d H:i:s'),
+                                'status'              => $cAppt['status'] ?? 'Open',
+                                'therapist_name'      => implode(', ', array_column($cAppt['employees'] ?? [], 'first_name')),
+                            ];
+                            break;
+                        }
+                    }
+
+                    if ($conflict) {
+                        $conflictTherapist = !empty($conflict['therapist_name']) ? "therapist {$conflict['therapist_name']}" : ($assignedEmpId ? "therapist ID {$assignedEmpId}" : "requested time slot");
+                        $conflictMsg = "Slot conflict detected: WESS slot for {$conflictTherapist} at {$apptDate} is already occupied by WESS booking #{$conflict['wess_appointment_id']} ({$conflict['start_time']} - {$conflict['end_time']}). Booking skipped to prevent overbooking.";
+                        Log::warning($conflictMsg);
+
+                        $log->update([
+                            'response_status' => 200,
+                            'response_body'   => json_encode([
+                                'status'   => 'skipped',
+                                'reason'   => 'Slot occupied in WESS',
+                                'message'  => $conflictMsg,
+                                'conflict' => $conflict,
+                            ]),
+                        ]);
+                        return;
+                    }
+                }
+            } catch (\Throwable $slotEx) {
+                Log::warning("Could not pre-check slot availability in WESS: " . $slotEx->getMessage());
+            }
+
             $wessAppointment = $wessClient->bookAppointment($branchId, $bookingPayload);
 
             // Persist synced appointment record to prevent duplicate loops
@@ -756,10 +1012,49 @@ class GhlWebhookController extends Controller
             $lastName  = $parts[1] ?? '';
         }
 
-        if (empty($phone)) {
+        // Auto-fetch full contact from GHL API if customFields are missing from webhook payload
+        if (!empty($ghlId) && (empty($contact['customFields']) || !is_array($contact['customFields']))) {
+            try {
+                $ghlCalendarService = app(GhlCalendarService::class);
+                $ghlContact = $ghlCalendarService->getContact($locationId, $ghlId);
+                if ($ghlContact) {
+                    $contact   = array_merge($contact, $ghlContact);
+                    $phone     = $ghlContact['phone'] ?? $phone;
+                    $firstName = $ghlContact['firstName'] ?? $firstName;
+                    $lastName  = $ghlContact['lastName'] ?? $lastName;
+                    $email     = $ghlContact['email'] ?? $email;
+                }
+            } catch (Exception $e) {
+                Log::warning("Could not auto-fetch contact {$ghlId} from GHL: " . $e->getMessage());
+            }
+        }
+
+        $fullName = trim(($firstName ?: '') . ' ' . ($lastName ?: ''));
+        if (empty($fullName) && !empty($name)) {
+            $fullName  = trim($name);
+            $parts     = explode(' ', $fullName, 2);
+            $firstName = $parts[0];
+            $lastName  = $parts[1] ?? $lastName;
+        }
+
+        $cleanPhone       = preg_replace('/[^0-9]/', '', (string)$phone);
+        $cleanNameLetters = preg_replace('/[^\p{L}]/u', '', (string)$fullName);
+
+        // Validation: A contact must have BOTH a valid phone number AND a valid name to create or sync in WESS.
+        // If a contact starts an anonymous conversation in MC with no name or no phone, skip the webhook.
+        if (empty($cleanPhone) || strlen($cleanPhone) < 7 || empty(trim($fullName)) || empty($cleanNameLetters)) {
+            $reason = (empty($cleanPhone) || strlen($cleanPhone) < 7)
+                ? 'Missing or invalid phone number'
+                : 'Missing or invalid contact name (contact must have a valid name containing letters)';
+
+            Log::info("Skipped contact webhook for contact {$ghlId}: Lead lacks both valid name and phone ({$reason}, Name: '{$fullName}', Phone: '{$phone}'). Skipping WESS customer creation/sync.");
+
             $log->update([
                 'response_status' => 200,
-                'response_body'   => 'Skipped: No phone number provided in contact payload.',
+                'response_body'   => json_encode([
+                    'status'  => 'skipped',
+                    'message' => "Skipped: Contact must have both a valid name and phone number to create/sync a WESS customer. ({$reason})",
+                ]),
             ]);
             return;
         }
@@ -768,35 +1063,174 @@ class GhlWebhookController extends Controller
             $wessClient = new WessClient($config->api_token, $config->base_url);
             $branchId   = $config->branch_id ?: 1;
 
-            $isExistingCustomer = true;
-            $customer = $wessClient->lookupCustomerByPhone($phone);
+            // CHECK 1: Check if MiniChat contact ALREADY has a "WESS Code"
+            $wessCodeFieldId = Cache::get("ghl_custom_fields_map_{$locationId}")['wess_code_id'] ?? null;
+            $existingWessCode = $this->extractFieldValue(
+                $payload,
+                $contact,
+                ['wess_code', 'wessCode', 'customer_code', 'customerCode'],
+                ['wess code', 'wess_code', 'wesscode', 'customer code', 'wess customer code', 'wess id'],
+                $wessCodeFieldId
+            );
+
+            $customer = null;
+            $isExistingCustomer = false;
             $endpoint = "{$config->base_url}/customers/lookup/phone-number/" . preg_replace('/[^0-9]/', '', $phone);
 
-            if (!$customer) {
+            if (!empty($existingWessCode)) {
+                $isExistingCustomer = true;
+                Log::info("Contact {$ghlId} already has WESS Code '{$existingWessCode}' in CRM. Customer creation in WESS is strictly blocked.");
+
+                // Resolve customer details from WESS by phone
+                if (!empty($phone)) {
+                    $customer = $wessClient->lookupCustomerByPhone($phone);
+                }
+
+                // If not resolved by phone, but existingWessCode is numeric, fetch by ID
+                if (!$customer && is_numeric($existingWessCode)) {
+                    try {
+                        $customer = $wessClient->getCustomer($branchId, $existingWessCode);
+                    } catch (\Throwable $e) {
+                        $customer = [
+                            'id'   => (int)$existingWessCode,
+                            'code' => (string)$existingWessCode,
+                        ];
+                    }
+                }
+
+                // If existingWessCode is alphanumeric (e.g. C006081) and phone did not match, try branch customer search
+                if (!$customer && !empty($existingWessCode)) {
+                    try {
+                        $branchCusts = $wessClient->getBranchCustomers($branchId, ['filter[code]' => $existingWessCode], false);
+                        if (!empty($branchCusts['data'][0])) {
+                            $customer = $branchCusts['data'][0];
+                        } elseif (!empty($branchCusts[0])) {
+                            $customer = $branchCusts[0];
+                        }
+                    } catch (\Throwable $e) {
+                        // Ignore if branch customers search endpoint is not accessible
+                    }
+                }
+
+                if (!$customer && is_numeric($existingWessCode)) {
+                    $customer = ['id' => (int)$existingWessCode, 'code' => (string)$existingWessCode];
+                }
+            }
+
+            // CHECK 2: If no WESS Code in CRM, check WESS by ALL phone number formats (+65, 65, 8-digit)
+            if (!$customer && !empty($phone)) {
+                $customer = $wessClient->lookupCustomerByPhone($phone);
+                if ($customer) {
+                    $isExistingCustomer = true;
+                    Log::info("Found existing WESS customer ID {$customer['id']} (Code: " . ($customer['code'] ?? 'none') . ") by phone {$phone}. Skipping customer creation.");
+                }
+            }
+
+            // CHECK 3: ONLY create customer if NEITHER Check 1 NOR Check 2 found an existing customer
+            if (!$customer && empty($existingWessCode)) {
+                // Secondary safeguard: Verify name and phone before calling WESS API
+                if (empty($cleanPhone) || strlen($cleanPhone) < 7 || empty(trim($fullName)) || empty($cleanNameLetters)) {
+                    Log::info("Aborted WESS customer creation for contact {$ghlId}: Incomplete lead lacks valid name or phone.");
+                    $log->update([
+                        'response_status' => 200,
+                        'response_body'   => json_encode([
+                            'status'  => 'skipped',
+                            'message' => 'Skipped: Contact must have both a valid name and phone number to create a new customer in WESS.',
+                        ]),
+                    ]);
+                    return;
+                }
+
                 $isExistingCustomer = false;
                 $endpoint = "{$config->base_url}/branches/{$branchId}/customers";
-                $phoneData = WessClient::parsePhoneNumber($phone);
-                $customer = $wessClient->createCustomer($branchId, [
-                    'first_name'                => $firstName ?: 'Customer',
-                    'last_name'                 => $lastName ?: '',
-                    'phone_mobile_country_code' => $phoneData['country_code'],
-                    'phone_mobile'              => $phoneData['mobile'],
-                    'email'                     => $email ?: '',
-                ]);
+                $customerPayload = $this->buildWessCustomerPayload($payload, $contact);
+                $customer = $wessClient->createCustomer($branchId, $customerPayload);
+                Log::info("Created new WESS customer ID {$customer['id']} (Code: " . ($customer['code'] ?? 'none') . ") for verified new lead {$phone}.");
             }
 
             // If customer has WESS ID and we have GHL ID, update GHL custom fields
             if (!empty($customer['id']) && !empty($ghlId)) {
                 try {
-                    $wessCode    = $customer['code'] ?? (string)$customer['id'];
-                    $salutation  = $customer['salutation'] ?? null;
-                    $gender      = $customer['customer_detail']['gender'] ?? ($customer['gender'] ?? null);
-                    $nric        = $customer['ic_no'] ?? null;
+                    // Resolve WESS Code: Prioritize actual alphanumeric salon member code (e.g. C006081)
+                    $wessCode = $customer['code'] ?? ($customer['customer_code'] ?? null);
+
+                    // If existing contact in CRM already had an alphanumeric code, preserve it
+                    if (empty($wessCode) && !empty($existingWessCode) && !is_numeric($existingWessCode)) {
+                        $wessCode = $existingWessCode;
+                    }
+
+                    // If code is missing or purely numeric, fetch customer details from WESS to get the real member code
+                    if ((empty($wessCode) || is_numeric($wessCode)) && !empty($customer['id'])) {
+                        try {
+                            $custDetails = $wessClient->getCustomer($branchId, $customer['id']);
+                            if (!empty($custDetails['code'])) {
+                                $wessCode = $custDetails['code'];
+                            } elseif (!empty($custDetails['customer_code'])) {
+                                $wessCode = $custDetails['customer_code'];
+                            }
+                        } catch (\Throwable $e) {
+                            Log::debug("Could not fetch customer code for ID {$customer['id']}: " . $e->getMessage());
+                        }
+                    }
+
+                    // Never overwrite a valid existing alphanumeric WESS code with a purely numeric ID
+                    if (is_numeric($wessCode) && !empty($existingWessCode) && !is_numeric($existingWessCode)) {
+                        $wessCode = $existingWessCode;
+                    }
+
+                    // If code is still purely numeric (internal database ID), do not push it as a WESS Code to CRM
+                    if (is_numeric($wessCode)) {
+                        $wessCode = !empty($existingWessCode) && !is_numeric($existingWessCode) ? $existingWessCode : null;
+                    }
+
+                    $salutation  = !empty($customer['salutation']) ? $customer['salutation'] : ($this->extractFieldValue(
+                        $payload,
+                        $contact,
+                        ['salutation', 'title'],
+                        ['salutation', 'title', 'wess salutation']
+                    ) ?? null);
+
+                    $rawGender   = $customer['customer_detail']['gender'] ?? ($customer['gender'] ?? null);
+                    if (empty($rawGender)) {
+                        $rawGender = $this->extractGenderFromPayload($payload, $contact);
+                    }
+                    $gender      = null;
+                    if ($rawGender !== null && $rawGender !== '') {
+                        $upper = strtoupper(trim((string)$rawGender));
+                        if ($upper === 'M' || $upper === 'MALE') {
+                            $gender = 'Male';
+                        } elseif ($upper === 'F' || $upper === 'FEMALE') {
+                            $gender = 'Female';
+                        } else {
+                            $gender = (string)$rawGender;
+                        }
+                    }
+
+                    $nric        = !empty($customer['ic_no']) ? $customer['ic_no'] : ($this->extractFieldValue(
+                        $payload,
+                        $contact,
+                        ['ic_no', 'nric', 'passport', 'id_number', 'nric_fin'],
+                        ['nric', 'ic no', 'ic_no', 'nric/fin', 'fin', 'id number', 'passport', 'id no']
+                    ) ?? null);
+
                     $contactType = $isExistingCustomer ? 'Existing Member' : 'New Lead';
-                    $prefName    = $firstName ?: ($customer['first_name'] ?? null);
+
+                    $prefName    = $this->extractFieldValue(
+                        $payload,
+                        $contact,
+                        ['preferred_name', 'preferredName', 'nickname'],
+                        ['preferred name', 'nickname', 'pref name']
+                    ) ?? ($firstName ?: ($customer['first_name'] ?? null));
+
                     $bdayMonth   = null;
-                    if (!empty($contact['dateOfBirth'])) {
-                        $bdayMonth = date('F', strtotime($contact['dateOfBirth']));
+                    $dob         = $contact['dateOfBirth'] ?? ($contact['date_of_birth'] ?? ($payload['dateOfBirth'] ?? null));
+                    if (!empty($dob)) {
+                        $bdayMonth = date('F', strtotime($dob));
+                    } elseif (!empty($customer['customer_detail']['birthday_month'])) {
+                        $monthNum = (int)$customer['customer_detail']['birthday_month'];
+                        if ($monthNum >= 1 && $monthNum <= 12) {
+                            $bdayMonth = date('F', mktime(0, 0, 0, $monthNum, 1));
+                        }
                     }
 
                     $ghlCalendarService = app(GhlCalendarService::class);
@@ -809,7 +1243,7 @@ class GhlWebhookController extends Controller
                             'salutation'     => $salutation,
                             'gender'         => $gender,
                             'nric'           => $nric,
-                            'contact_type'   => $contactType,
+                            'contact_source' => $contactType,
                             'birthday_month' => $bdayMonth,
                             'preferred_name' => $prefName,
                         ]
@@ -880,5 +1314,349 @@ class GhlWebhookController extends Controller
 
         GhlToken::where('company_id', $companyId)->delete();
         Log::info("Completed cleanup for GHL company: {$companyId}");
+    }
+
+    /**
+     * Extract and normalize gender ('M' or 'F') from webhook payload or contact
+     */
+    protected function extractGenderFromPayload(array $payload, ?array $contact = null): ?string
+    {
+        $contact = $contact ?? ($payload['contact'] ?? ($payload['data'] ?? $payload));
+        $raw = $contact['gender'] ?? ($payload['gender'] ?? null);
+
+        // Check customFields if not found at root
+        if (empty($raw)) {
+            $customFields = $contact['customFields'] ?? ($payload['customFields'] ?? []);
+            if (is_array($customFields)) {
+                foreach ($customFields as $k => $cf) {
+                    if (is_array($cf)) {
+                        $fKey = strtolower((string)($cf['key'] ?? ($cf['fieldKey'] ?? ($cf['name'] ?? ''))));
+                        if (str_contains($fKey, 'gender') || str_contains($fKey, 'sex')) {
+                            $raw = $cf['value'] ?? ($cf['field_value'] ?? null);
+                            break;
+                        }
+                    } elseif (is_string($k) && (str_contains(strtolower($k), 'gender') || str_contains(strtolower($k), 'sex'))) {
+                        $raw = $cf;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (empty($raw)) {
+            return null;
+        }
+
+        $clean = strtoupper(trim((string)$raw));
+        if (in_array($clean, ['M', 'MALE', 'BOY', 'MAN'])) {
+            return 'M';
+        }
+        if (in_array($clean, ['F', 'FEMALE', 'GIRL', 'WOMAN'])) {
+            return 'F';
+        }
+
+        return null;
+    }
+
+    /**
+     * Build a complete WESS customer registration payload mapping all possible fields from GHL
+     * per WESS API v1.0.0 Section 3.5.
+     */
+    protected function buildWessCustomerPayload(array $payload, ?array $sourceData = null): array
+    {
+        $sourceData = $sourceData ?? ($payload['contact'] ?? ($payload['data'] ?? $payload));
+
+        // Phone
+        $phone = $sourceData['phone'] ?? ($payload['phone'] ?? '');
+        $phoneData = WessClient::parsePhoneNumber($phone);
+
+        // Name
+        $firstName = $sourceData['firstName'] ?? ($sourceData['first_name'] ?? ($payload['firstName'] ?? ($payload['first_name'] ?? '')));
+        $lastName  = $sourceData['lastName'] ?? ($sourceData['last_name'] ?? ($payload['lastName'] ?? ($payload['last_name'] ?? '')));
+        $name      = $sourceData['name'] ?? ($payload['name'] ?? '');
+
+        if (empty($firstName) && !empty($name)) {
+            $parts     = explode(' ', trim($name), 2);
+            $firstName = $parts[0];
+            $lastName  = $parts[1] ?? '';
+        }
+
+        $customerPayload = [
+            'first_name'                => mb_substr($firstName ?: 'Customer', 0, 50),
+            'last_name'                 => mb_substr($lastName ?: '', 0, 50),
+            'phone_mobile_country_code' => $phoneData['country_code'],
+            'phone_mobile'              => $phoneData['mobile'],
+        ];
+
+        // Email
+        $email = $sourceData['email'] ?? ($payload['email'] ?? '');
+        if (!empty($email)) {
+            $customerPayload['email'] = mb_substr(trim($email), 0, 50);
+        }
+
+        // Salutation (Mr, Mrs, Ms, Miss, Dr)
+        $salutation = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['salutation', 'title'],
+            ['salutation', 'title', 'wess salutation']
+        );
+        if (!empty($salutation)) {
+            $customerPayload['salutation'] = mb_substr(trim($salutation), 0, 10);
+        }
+
+        // IC No / NRIC / Passport
+        $icNo = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['ic_no', 'nric', 'passport', 'id_number', 'nric_fin'],
+            ['nric', 'ic no', 'ic_no', 'nric/fin', 'fin', 'id number', 'passport', 'id no']
+        );
+        if (!empty($icNo)) {
+            $customerPayload['ic_no'] = mb_substr(trim($icNo), 0, 20);
+        }
+
+        // Nested detail fields
+        $detail = [];
+
+        // Gender ('M' or 'F')
+        $gender = $this->extractGenderFromPayload($payload, $sourceData);
+        if (!empty($gender)) {
+            $detail['gender'] = $gender;
+        }
+
+        // Email in detail
+        if (!empty($email)) {
+            $detail['email'] = mb_substr(trim($email), 0, 50);
+        }
+
+        // Date of Birth -> birthday_year, birthday_month, birthday_day
+        $rawDob = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['dateOfBirth', 'date_of_birth', 'dob', 'birthdate'],
+            ['date of birth', 'date_of_birth', 'dob', 'birth date', 'birthdate', 'birthday']
+        );
+        if (!empty($rawDob)) {
+            try {
+                $dob = Carbon::parse($rawDob);
+                $year  = (int)$dob->format('Y');
+                $month = (int)$dob->format('n');
+                $day   = (int)$dob->format('j');
+                $currentYear = (int)date('Y');
+
+                if ($year >= 1900 && $year <= $currentYear && $month >= 1 && $month <= 12 && $day >= 1 && $day <= 31) {
+                    $detail['birthday_year']  = $year;
+                    $detail['birthday_month'] = $month;
+                    $detail['birthday_day']   = $day;
+                }
+            } catch (\Throwable $e) {
+                Log::debug("Could not parse dateOfBirth for WESS customer: {$rawDob}");
+            }
+        }
+
+        // Address fields
+        $addressStreet = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['address1', 'address', 'street'],
+            ['address', 'address1', 'street', 'street address']
+        );
+        if (!empty($addressStreet)) {
+            $detail['address_street'] = mb_substr(trim($addressStreet), 0, 500);
+        }
+
+        $addressCity = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['city'],
+            ['city', 'town']
+        );
+        if (!empty($addressCity)) {
+            $detail['address_city'] = mb_substr(trim($addressCity), 0, 50);
+        }
+
+        $addressState = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['state'],
+            ['state', 'province']
+        );
+        if (!empty($addressState)) {
+            $detail['address_state'] = mb_substr(trim($addressState), 0, 50);
+        }
+
+        $addressCountry = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['country'],
+            ['country']
+        );
+        if (!empty($addressCountry)) {
+            $detail['address_country'] = mb_substr(trim($addressCountry), 0, 50);
+        }
+
+        $addressPostcode = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['postalCode', 'postal_code', 'postcode', 'zip'],
+            ['postal code', 'postal_code', 'postcode', 'zip', 'zipcode', 'postal']
+        );
+        if (!empty($addressPostcode)) {
+            $detail['address_postcode'] = mb_substr(trim($addressPostcode), 0, 10);
+        }
+
+        // Additional Demographics
+        $nationality = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['nationality'],
+            ['nationality', 'citizenship', 'citizen']
+        );
+        if (!empty($nationality)) {
+            $detail['nationality'] = mb_substr(trim($nationality), 0, 50);
+        }
+
+        $maritalStatus = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['marital_status', 'maritalStatus'],
+            ['marital status', 'marital_status', 'maritalstatus']
+        );
+        if (!empty($maritalStatus)) {
+            $ms = strtoupper(trim($maritalStatus));
+            $msCode = match(true) {
+                in_array($ms, ['S', 'SINGLE', 'UNMARRIED']) => 'S',
+                in_array($ms, ['M', 'MARRIED'])             => 'M',
+                in_array($ms, ['D', 'DIVORCED'])            => 'D',
+                in_array($ms, ['W', 'WIDOWED', 'WIDOW'])    => 'W',
+                default                                     => null,
+            };
+            if ($msCode) {
+                $detail['marital_status'] = $msCode;
+            }
+        }
+
+        $occupation = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['occupation', 'jobTitle', 'job_title'],
+            ['occupation', 'job title', 'job_title', 'profession']
+        );
+        if (!empty($occupation)) {
+            $detail['occupation'] = mb_substr(trim($occupation), 0, 50);
+        }
+
+        $race = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['race'],
+            ['race', 'ethnicity']
+        );
+        if (!empty($race)) {
+            $detail['race'] = mb_substr(trim($race), 0, 50);
+        }
+
+        $religion = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['religion'],
+            ['religion']
+        );
+        if (!empty($religion)) {
+            $detail['religion'] = mb_substr(trim($religion), 0, 50);
+        }
+
+        // Secondary phones
+        $phoneHome = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['phone_home', 'homePhone', 'home_phone'],
+            ['home phone', 'home_phone', 'phone_home', 'tel home']
+        );
+        if (!empty($phoneHome)) {
+            $detail['phone_home'] = mb_substr(trim($phoneHome), 0, 50);
+        }
+
+        $phoneWork = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['phone_work', 'workPhone', 'work_phone'],
+            ['work phone', 'work_phone', 'phone_work', 'office phone']
+        );
+        if (!empty($phoneWork)) {
+            $detail['phone_work'] = mb_substr(trim($phoneWork), 0, 50);
+        }
+
+        $phoneOther = $this->extractFieldValue(
+            $payload,
+            $sourceData,
+            ['phone_other', 'otherPhone', 'other_phone'],
+            ['other phone', 'other_phone', 'phone_other', 'secondary phone']
+        );
+        if (!empty($phoneOther)) {
+            $detail['phone_other'] = mb_substr(trim($phoneOther), 0, 50);
+        }
+
+        if (!empty($detail)) {
+            $customerPayload['detail'] = $detail;
+        }
+
+        return $customerPayload;
+    }
+
+    /**
+     * Extract a field value from contact, payload, or customFields matching one of the aliases or a known field ID
+     */
+    protected function extractFieldValue(array $payload, ?array $sourceData, array $directKeys, array $customFieldAliases, ?string $knownFieldId = null): ?string
+    {
+        $sourceData = $sourceData ?? ($payload['contact'] ?? ($payload['data'] ?? $payload));
+
+        // 1. Direct key lookups on sourceData and payload
+        foreach ($directKeys as $key) {
+            if (!empty($sourceData[$key]) && is_scalar($sourceData[$key])) {
+                return trim((string)$sourceData[$key]);
+            }
+            if (!empty($payload[$key]) && is_scalar($payload[$key])) {
+                return trim((string)$payload[$key]);
+            }
+        }
+
+        // 2. Custom fields lookup
+        $customFields = $sourceData['customFields'] ?? ($payload['customFields'] ?? []);
+        if (is_array($customFields)) {
+            foreach ($customFields as $k => $cf) {
+                if (is_array($cf)) {
+                    // Match by known custom field ID if provided
+                    if (!empty($knownFieldId) && !empty($cf['id']) && (string)$cf['id'] === (string)$knownFieldId) {
+                        $val = $cf['value'] ?? ($cf['field_value'] ?? null);
+                        if (!empty($val) && is_scalar($val)) {
+                            return trim((string)$val);
+                        }
+                    }
+
+                    $fKey = strtolower((string)($cf['key'] ?? ($cf['fieldKey'] ?? ($cf['name'] ?? ''))));
+                    foreach ($customFieldAliases as $alias) {
+                        if (str_contains($fKey, strtolower($alias))) {
+                            $val = $cf['value'] ?? ($cf['field_value'] ?? null);
+                            if (!empty($val) && is_scalar($val)) {
+                                return trim((string)$val);
+                            }
+                        }
+                    }
+                } elseif (is_string($k)) {
+                    $lowK = strtolower($k);
+                    foreach ($customFieldAliases as $alias) {
+                        if (str_contains($lowK, strtolower($alias))) {
+                            if (!empty($cf) && is_scalar($cf)) {
+                                return trim((string)$cf);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 }

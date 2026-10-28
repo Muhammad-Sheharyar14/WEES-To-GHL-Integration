@@ -1479,6 +1479,7 @@
                     <input type="hidden" name="locationId" id="locationId">
                     <input type="hidden" name="companyId" id="companyId">
                     <input type="hidden" name="userId" id="userId">
+                    <input type="hidden" name="userRole" id="userRole">
 
                     <div class="form-group">
                         <label class="form-label" for="base_url">
@@ -1601,6 +1602,49 @@
                     <div class="metric-item">
                         <span class="metric-key">Calendar Routing</span>
                         <span class="metric-val" style="color: var(--success); font-weight: 600;">Dynamic Staff Calendars</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-key">Master Sync Status</span>
+                        <span class="metric-val" id="dispSyncEngine" style="color: var(--success); font-weight: 600;">Active & Syncing</span>
+                    </div>
+                    <div class="metric-item" style="flex-wrap: wrap; gap: 8px;">
+                        <div style="flex: 1; min-width: 140px;">
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span class="metric-key">Switched Off Date & Time (SODT)</span>
+                                <span class="label-badge" id="dispSodtBadge" style="display: none; font-size: 10px;">Armed</span>
+                            </div>
+                            <span class="form-hint" style="font-size: 11px; margin-top: 2px;">Start point for gap catch-up recovery</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                            <span class="metric-val mono-val" id="dispSodtVal" style="font-size: 12px; color: var(--text-muted);">None (Active)</span>
+                            <button type="button" class="btn-token-link" id="btnToggleSodtEditor" onclick="toggleSodtEditor()" title="Edit or override Switched Off Date & Time">
+                                ✎ Override
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SODT Override Panel (Expandable) -->
+                <div id="sodtOverridePanel" style="display: none; margin-top: 14px; padding: 14px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-md);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="font-size: 13px; font-weight: 700; color: var(--text-main);">Override Switched Off Date & Time</span>
+                        <span class="label-badge" style="background: #fef3c7; color: #b45309; font-weight: 600;">Catch-Up Setting</span>
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-subtle); margin-bottom: 12px; line-height: 1.45;">
+                        Manually set the exact date & time to catch up missed appointments from when sync resumes.
+                    </p>
+                    <div style="margin-bottom: 12px;">
+                        <label class="form-label" for="sodtInput">
+                            <span>Catch-Up Start Date & Time (SGT)</span>
+                            <span class="label-badge">Local Time</span>
+                        </label>
+                        <input type="datetime-local" class="form-control" id="sodtInput" style="height: 38px; font-size: 13px;">
+                    </div>
+                    <div style="display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap;">
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="toggleSodtEditor(false)">Cancel</button>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="setSodtInputToNow()" title="Set to right now">Now</button>
+                        <button type="button" class="btn btn-secondary btn-sm" style="color: var(--danger); border-color: #fecaca;" onclick="clearSodtOverride()" title="Clear SODT">Clear</button>
+                        <button type="button" class="btn btn-primary btn-sm" id="btnSaveSodt" onclick="submitSodtOverride()">Save Override</button>
                     </div>
                 </div>
 
@@ -2196,25 +2240,45 @@
 
 
     /* ========================================================
-       User Data Decryption & Resolution
+       User Data Decryption & Resolution (Admin Role Enforcement)
     ======================================================== */
+    let currentUserRole = null;
+    let currentUserId   = null;
+
     async function getUserData() {
         try {
             const urlParams = new URLSearchParams(window.location.search);
             const queryLocationId = urlParams.get('location_id') || urlParams.get('locationId') || urlParams.get('location');
             const queryCompanyId  = urlParams.get('company_id') || urlParams.get('companyId');
+            const queryUserRole   = urlParams.get('user_role') || urlParams.get('role');
+            const queryUserId     = urlParams.get('user_id') || urlParams.get('userId');
+
+            if (queryUserRole) {
+                currentUserRole = queryUserRole.toLowerCase();
+                const roleInput = document.getElementById('userRole');
+                if (roleInput) roleInput.value = currentUserRole;
+            }
+            if (queryUserId) {
+                currentUserId = queryUserId;
+                const userInput = document.getElementById('userId');
+                if (userInput) userInput.value = currentUserId;
+            }
+
+            // 1. Direct query param role check (e.g. from Custom Menu Link with {user.role})
+            if (currentUserRole && currentUserRole === 'user') {
+                renderAccessDeniedScreen({ 
+                    role: 'user', 
+                    userName: urlParams.get('user_name') || 'Staff Member',
+                    email: urlParams.get('user_email') || ''
+                });
+                return;
+            }
 
             if (queryCompanyId) {
                 document.getElementById('companyId').value = queryCompanyId;
             }
 
-            if (queryLocationId) {
-                document.getElementById('locationId').value = queryLocationId;
-                document.getElementById('dispLocationId').textContent = queryLocationId;
-                fetchExistingCredentials(queryLocationId, queryCompanyId);
-                fetchLogs(1);
-            }
-
+            // 2. GHL Parent Window PostMessage SSO Resolution
             if (window.parent !== window) {
                 const encryptedUserData = await new Promise((resolve) => {
                     const timer = setTimeout(() => {
@@ -2239,10 +2303,29 @@
                     const decryptedData  = decryptedBytes.toString(CryptoJS.enc.Utf8);
                     if (decryptedData) {
                         const userData = JSON.parse(decryptedData);
+                        const role = (userData.role || '').toLowerCase();
+                        const isAgencyOwner = Boolean(userData.isAgencyOwner);
+                        const isAgency = (userData.type || '').toLowerCase() === 'agency';
+
+                        // Enforce Admin-only restriction: block regular staff users (like Aarin)
+                        if (role !== 'admin' && !isAgencyOwner && !isAgency) {
+                            renderAccessDeniedScreen(userData);
+                            return;
+                        }
+
                         populateUserData(userData);
+                        return;
                     }
                 }
-            } else if (!queryLocationId) {
+            }
+
+            // 3. Fallback for direct standalone view or query param location
+            if (queryLocationId) {
+                document.getElementById('locationId').value = queryLocationId;
+                document.getElementById('dispLocationId').textContent = queryLocationId;
+                fetchExistingCredentials(queryLocationId, queryCompanyId);
+                fetchLogs(1);
+            } else if (window.parent === window) {
                 document.getElementById('dispLocationId').textContent = 'Direct Preview (No Account Context)';
                 updateBadge(false, 'Open Inside CRM');
             }
@@ -2251,7 +2334,51 @@
         }
     }
 
+    function renderAccessDeniedScreen(userData) {
+        const container = document.querySelector('.container');
+        if (!container) return;
+
+        container.innerHTML = `
+            <div style="max-width: 540px; margin: 90px auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.06), 0 8px 10px -6px rgba(0,0,0,0.02); padding: 48px 36px; text-align: center;">
+                <div style="width: 64px; height: 64px; border-radius: 50%; background: #fef2f2; border: 1px solid #fecaca; display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; font-size: 28px; color: #dc2626;">
+                    🔒
+                </div>
+                <div style="display: inline-block; padding: 4px 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 20px; font-size: 11px; font-weight: 700; color: #dc2626; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px;">
+                    Administrator Access Required
+                </div>
+                <h2 style="font-size: 22px; font-weight: 700; color: #0f172a; margin-bottom: 12px; letter-spacing: -0.02em;">
+                    Access Restricted
+                </h2>
+                <p style="font-size: 14px; color: #64748b; line-height: 1.6; max-width: 440px; margin: 0 auto;">
+                    WESS Integration Settings, API credentials, and sync controls are restricted to account <strong>Administrators</strong> only.
+                </p>
+            </div>
+        `;
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+        return String(text).replace(/[&<>"']/g, m => map[m]);
+    }
+
     function populateUserData(userData) {
+        const role = (userData.role || '').toLowerCase();
+        const isAgencyOwner = Boolean(userData.isAgencyOwner);
+        const isAgency = (userData.type || '').toLowerCase() === 'agency';
+
+        // Block non-admin users
+        if (role !== 'admin' && !isAgencyOwner && !isAgency) {
+            renderAccessDeniedScreen(userData);
+            return;
+        }
+
+        currentUserRole = role || 'admin';
+        currentUserId = userData.userId || null;
+
+        const roleInput = document.getElementById('userRole');
+        if (roleInput) roleInput.value = currentUserRole;
+
         const locationId = userData.activeLocation || userData.locationId;
         const companyId  = userData.companyId;
 
@@ -2282,7 +2409,9 @@
             },
             body: JSON.stringify({ 
                 locationId: locationId,
-                companyId: companyId 
+                companyId: companyId,
+                user_role: currentUserRole,
+                user_id: currentUserId
             })
         })
         .then(res => res.json())
@@ -2348,13 +2477,25 @@
                     dispWess.style.color = creds.is_connected ? 'var(--success)' : 'var(--text-muted)';
 
                     updateBadge(creds.is_connected);
+
+                    renderSodtDisplay(
+                        creds.sync_paused_at || data.sync_paused_at,
+                        creds.sync_paused_at_formatted || data.sync_paused_at_formatted,
+                        creds.sync_paused_at_input || data.sync_paused_at_input
+                    );
                 } else {
                     populateCalendars(data.calendars || [], null, null);
                     updateBadge(false);
+                    renderSodtDisplay(
+                        data.sync_paused_at,
+                        data.sync_paused_at_formatted,
+                        data.sync_paused_at_input
+                    );
                 }
             } else {
                 populateCalendars([], null, null);
                 updateBadge(false);
+                renderSodtDisplay(null, null, null);
             }
         })
         .catch(err => {
@@ -2382,13 +2523,20 @@
             body: JSON.stringify({
                 locationId: locationId,
                 companyId: companyId,
-                is_sync_enabled: isEnabled
+                is_sync_enabled: isEnabled,
+                user_role: currentUserRole,
+                user_id: currentUserId
             })
         })
         .then(res => res.json())
         .then(data => {
             if (data.success) {
                 updateMasterToggleUI(data.is_sync_enabled);
+                renderSodtDisplay(
+                    data.sync_paused_at,
+                    data.sync_paused_at_formatted,
+                    data.sync_paused_at_input
+                );
                 notify('success', 'Master Switch Updated', data.message);
             } else {
                 updateMasterToggleUI(!isEnabled);
@@ -2398,6 +2546,203 @@
         .catch(err => {
             updateMasterToggleUI(!isEnabled);
             notify('error', 'Network Error', 'Failed to reach server. Please try again.');
+        });
+    }
+
+    /* ========================================================
+       Switched Off Date & Time (SODT) & Override Logic
+    ======================================================== */
+    let currentSodtIso = null;
+    let currentSodtInputVal = null;
+
+    function renderSodtDisplay(isoStr, formattedStr, inputVal, isSyncEnabled = null) {
+        currentSodtIso = isoStr || null;
+        currentSodtInputVal = inputVal || null;
+
+        const valEl = document.getElementById('dispSodtVal');
+        const badgeEl = document.getElementById('dispSodtBadge');
+        const inputEl = document.getElementById('sodtInput');
+        const toggle = document.getElementById('masterSyncToggle');
+        const isEnabled = isSyncEnabled !== null ? isSyncEnabled : (toggle ? toggle.checked : false);
+
+        if (!valEl) return;
+
+        if (formattedStr) {
+            valEl.textContent = formattedStr + ' (SGT)';
+            if (isEnabled) {
+                valEl.style.color = '#1d4ed8';
+                valEl.style.background = '#eff6ff';
+                valEl.style.borderColor = '#bfdbfe';
+                if (badgeEl) {
+                    badgeEl.style.display = 'inline-block';
+                    badgeEl.textContent = 'Catch-Up Pending';
+                    badgeEl.style.background = '#eff6ff';
+                    badgeEl.style.color = '#1d4ed8';
+                }
+            } else {
+                valEl.style.color = '#b45309';
+                valEl.style.background = '#fef3c7';
+                valEl.style.borderColor = '#fde68a';
+                if (badgeEl) {
+                    badgeEl.style.display = 'inline-block';
+                    badgeEl.textContent = 'Armed for Catch-Up';
+                    badgeEl.style.background = '#fef3c7';
+                    badgeEl.style.color = '#b45309';
+                }
+            }
+            if (inputEl && inputVal) {
+                inputEl.value = inputVal;
+            }
+        } else {
+            valEl.textContent = 'None (Active / Up-to-date)';
+            valEl.style.color = 'var(--text-muted)';
+            valEl.style.background = '#f1f5f9';
+            valEl.style.borderColor = '#e2e8f0';
+            if (badgeEl) {
+                badgeEl.style.display = 'none';
+            }
+            if (inputEl) {
+                inputEl.value = '';
+            }
+        }
+    }
+
+    function toggleSodtEditor(forceState = null) {
+        const panel = document.getElementById('sodtOverridePanel');
+        const input = document.getElementById('sodtInput');
+        if (!panel) return;
+
+        const isCurrentlyOpen = panel.style.display !== 'none';
+        const willOpen = forceState !== null ? forceState : !isCurrentlyOpen;
+
+        if (willOpen) {
+            panel.style.display = 'block';
+            if (currentSodtInputVal) {
+                input.value = currentSodtInputVal;
+            } else {
+                setSodtInputToNow();
+            }
+            input.focus();
+        } else {
+            panel.style.display = 'none';
+        }
+    }
+
+    function setSodtInputToNow() {
+        const input = document.getElementById('sodtInput');
+        if (!input) return;
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        input.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+    }
+
+    function submitSodtOverride() {
+        const locationId = document.getElementById('locationId').value;
+        const input = document.getElementById('sodtInput');
+        const saveBtn = document.getElementById('btnSaveSodt');
+
+        if (!locationId) {
+            notify('warning', 'Location Required', 'Open this page inside your CRM account.');
+            return;
+        }
+
+        const sodtVal = input ? input.value : '';
+        if (!sodtVal) {
+            notify('warning', 'Date Required', 'Please select a valid date and time, or click "Clear".');
+            return;
+        }
+
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+        }
+
+        fetch("{{ route('api.custom-page.override-sodt') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                locationId: locationId,
+                sync_paused_at: sodtVal,
+                user_role: currentUserRole,
+                user_id: currentUserId
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Override';
+            }
+            if (data.success) {
+                renderSodtDisplay(data.sync_paused_at, data.sync_paused_at_formatted, data.sync_paused_at_input);
+                toggleSodtEditor(false);
+                notify('success', 'SODT Saved', data.message);
+                fetchLogs(1);
+            } else {
+                notify('error', 'Override Failed', data.message || 'Could not update SODT.');
+            }
+        })
+        .catch(err => {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Override';
+            }
+            notify('error', 'Network Error', 'Failed to reach server to update SODT.');
+        });
+    }
+
+    function clearSodtOverride() {
+        const locationId = document.getElementById('locationId').value;
+        const saveBtn = document.getElementById('btnSaveSodt');
+
+        if (!locationId) {
+            notify('warning', 'Location Required', 'Open this page inside your CRM account.');
+            return;
+        }
+
+        if (!confirm('Are you sure you want to clear the Switched Off Date & Time? When sync runs, it will only sync upcoming bookings instead of catching up past gaps.')) {
+            return;
+        }
+
+        if (saveBtn) saveBtn.disabled = true;
+
+        fetch("{{ route('api.custom-page.override-sodt') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                locationId: locationId,
+                sync_paused_at: '',
+                user_role: currentUserRole,
+                user_id: currentUserId
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (saveBtn) saveBtn.disabled = false;
+            if (data.success) {
+                renderSodtDisplay(null, null, null);
+                toggleSodtEditor(false);
+                notify('success', 'SODT Cleared', data.message);
+                fetchLogs(1);
+            } else {
+                notify('error', 'Clear Failed', data.message || 'Could not clear SODT.');
+            }
+        })
+        .catch(err => {
+            if (saveBtn) saveBtn.disabled = false;
+            notify('error', 'Network Error', 'Failed to reach server.');
         });
     }
 
@@ -2445,7 +2790,9 @@
                 locationId: locationId,
                 page: page,
                 search: search,
-                status: status
+                status: status,
+                user_role: currentUserRole,
+                user_id: currentUserId
             })
         })
         .then(res => res.json())
@@ -2484,8 +2831,25 @@
         }
 
         tbody.innerHTML = items.map((item, index) => {
-            const statusClass = item.is_success ? 'success' : (item.response_status ? 'error' : 'neutral');
-            const statusLabel = item.response_status ? `${item.response_status}` : 'Pending';
+            let statusClass = 'neutral';
+            let statusLabel = item.response_status ? `${item.response_status}` : 'Pending';
+
+            const isSkipped = item.response_body && (
+                item.response_body.includes('"status":"skipped"') || 
+                item.response_body.includes('Skipping WESS booking')
+            );
+
+            if (item.is_success) {
+                statusClass = 'success';
+                statusLabel = `${item.response_status || 200}`;
+            } else if (isSkipped) {
+                statusClass = 'neutral';
+                statusLabel = 'Skipped';
+            } else {
+                statusClass = 'error';
+                statusLabel = (item.response_status && item.response_status !== 200) ? `${item.response_status}` : 'Failed';
+            }
+
             const methodClass = (item.method || 'POST').toLowerCase();
             const displaySource = item.source === 'ghl_webhook' ? 'CRM Webhook' : (item.source === 'wess_sync' ? 'WESS Sync' : (item.source || '—'));
 
@@ -2581,8 +2945,21 @@
         document.getElementById('modalEventTitle').textContent = item.event_type || 'Event Details';
 
         const statusBadge = document.getElementById('modalStatusBadge');
-        statusBadge.className = `badge-status ${item.is_success ? 'success' : 'error'}`;
-        statusBadge.textContent = item.response_status ? `Status: ${item.response_status}` : 'Pending';
+        const isSkipped = item.response_body && (
+            item.response_body.includes('"status":"skipped"') || 
+            item.response_body.includes('Skipping WESS booking')
+        );
+
+        if (item.is_success) {
+            statusBadge.className = 'badge-status success';
+            statusBadge.textContent = item.response_status ? `Status: ${item.response_status}` : 'Status: 200';
+        } else if (isSkipped) {
+            statusBadge.className = 'badge-status neutral';
+            statusBadge.textContent = 'Status: Skipped';
+        } else {
+            statusBadge.className = 'badge-status error';
+            statusBadge.textContent = (item.response_status && item.response_status !== 200) ? `Status: ${item.response_status}` : 'Status: Failed';
+        }
 
         document.getElementById('modalMethod').textContent = item.method || 'POST';
         document.getElementById('modalStatus').textContent = item.response_status ? `${item.response_status}` : '—';
@@ -2710,7 +3087,9 @@
             },
             body: JSON.stringify({
                 log_id: logId,
-                locationId: locationId
+                locationId: locationId,
+                user_role: currentUserRole,
+                user_id: currentUserId
             })
         })
         .then(res => res.json())
@@ -2802,7 +3181,12 @@
                 'X-CSRF-TOKEN': csrfToken,
                 'X-Requested-With': 'XMLHttpRequest'
             },
-            body: JSON.stringify({ base_url: baseUrl, api_token: token })
+            body: JSON.stringify({ 
+                base_url: baseUrl, 
+                api_token: token,
+                user_role: currentUserRole,
+                user_id: currentUserId
+            })
         })
         .then(res => res.json())
         .then(data => {
@@ -2890,7 +3274,9 @@
                 calendar_id: calendarId,
                 calendar_name: calendarName,
                 calendar_user_id: calendarUserId,
-                is_sync_enabled: syncEnabled
+                is_sync_enabled: syncEnabled,
+                user_role: currentUserRole,
+                user_id: currentUserId
             })
         })
         .then(res => res.json())

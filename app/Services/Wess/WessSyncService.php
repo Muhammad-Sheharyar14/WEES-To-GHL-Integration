@@ -115,6 +115,7 @@ class WessSyncService
                     'filter' => [
                         'date_from' => $currentStart->format('Y-m-d H:i:s'),
                         'date_to'   => $currentEnd->format('Y-m-d H:i:s'),
+                        'status'    => 'OP,RQ,CF,BC',
                     ],
                     'per_page' => $limit ? min($limit, 100) : 100,
                     'sort'     => 'date',
@@ -198,12 +199,29 @@ class WessSyncService
                         continue;
                     }
 
-                    $apptHash = md5(($appt['date'] ?? '') . ($appt['status'] ?? '') . ($appt['processing_time'] ?? '') . ($appt['service_name'] ?? $appt['service'] ?? '') . ($appt['customer_name'] ?? ''));
-
                     // Check persistent database table for existing sync mapping (never relies on volatile cache)
                     $existingSync = SyncedAppointment::where('location_id', $locationId)
                         ->where('wess_appointment_id', (string) $apptId)
                         ->first();
+
+                    /*
+                    // [COMMENTED OUT PER USER REQUEST - October 27, 2026]
+                    // If appointment is marked cancelled in WESS, propagate cancellation to CRM immediately and skip calendar booking
+                    $statusLower = strtolower(trim((string)($appt['status'] ?? '')));
+                    $isCancelledInWess = in_array($statusLower, ['cancelled', 'cancel', 'last minute cancel', 'bc'], true);
+                    if ($isCancelledInWess) {
+                        if ($existingSync && $existingSync->status !== 'cancelled') {
+                            if (!empty($existingSync->ghl_appointment_id)) {
+                                $this->ghlCalendarService->cancelAppointmentInGhl($locationId, $existingSync->ghl_appointment_id);
+                            }
+                            $existingSync->update(['status' => 'cancelled']);
+                            Log::info("WESS cancellation propagated to CRM: WESS #{$apptId} is marked '{$appt['status']}'. Cancelled CRM event {$existingSync->ghl_appointment_id}.");
+                        }
+                        continue;
+                    }
+                    */
+
+                    $apptHash = md5(($appt['date'] ?? '') . ($appt['status'] ?? '') . ($appt['processing_time'] ?? '') . ($appt['service_name'] ?? $appt['service'] ?? '') . ($appt['customer_name'] ?? ''));
 
                     // Skip unchanged appointments to conserve API quota and eliminate duplicates
                     if (!$isTest && $existingSync && $existingSync->ghl_appointment_id && $existingSync->sync_hash === $apptHash) {
@@ -238,6 +256,43 @@ class WessSyncService
                     $errors[] = "Appt #" . ($appt['id'] ?? 'unknown') . ": " . $e->getMessage();
                 }
             }
+
+            /*
+            // [COMMENTED OUT PER USER REQUEST - October 27, 2026]
+            // 3. Sync Cancellations: Remove or cancel appointments in CRM that were cancelled or deleted in WESS
+            if (!$stoppedEarly && !$isTest) {
+                $activeWessIds = array_map('strval', array_column(
+                    array_filter($appointments, function($a) {
+                        $st = strtolower(trim((string)($a['status'] ?? '')));
+                        return !in_array($st, ['cancelled', 'cancel', 'last minute cancel', 'bc'], true);
+                    }),
+                    'id'
+                ));
+
+                $disappearedAppts = SyncedAppointment::where('location_id', $locationId)
+                    ->where('status', '!=', 'cancelled')
+                    ->get()
+                    ->filter(function ($rec) use ($startDate, $targetEndDate) {
+                        if (empty($rec->start_time)) return false;
+                        try {
+                            $parsed = Carbon::parse($rec->start_time);
+                            return $parsed->gte($startDate) && $parsed->lte($targetEndDate);
+                        } catch (\Throwable $e) {
+                            return false;
+                        }
+                    });
+
+                foreach ($disappearedAppts as $disAppt) {
+                    if (!in_array((string)$disAppt->wess_appointment_id, $activeWessIds, true)) {
+                        if (!empty($disAppt->ghl_appointment_id)) {
+                            $this->ghlCalendarService->cancelAppointmentInGhl($locationId, $disAppt->ghl_appointment_id);
+                        }
+                        $disAppt->update(['status' => 'cancelled']);
+                        Log::info("WESS cancellation propagated to CRM: WESS #{$disAppt->wess_appointment_id} is no longer active in WESS. Cancelled corresponding CRM appointment {$disAppt->ghl_appointment_id}.");
+                    }
+                }
+            }
+            */
 
             // Update last_synced_at timestamp on location config
             // If this was a catch-up recovery sync and completed without being stopped early, clear sync_paused_at
