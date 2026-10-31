@@ -1297,13 +1297,64 @@
             word-break: break-all;
         }
 
+        .modal-nav-tabs {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px;
+            background: #f1f5f9;
+            border-radius: var(--radius-md);
+            width: 100%;
+            box-sizing: border-box;
+            flex-wrap: wrap;
+            margin-bottom: 2px;
+        }
+
+        .modal-nav-tab {
+            padding: 7px 14px;
+            font-size: 12.5px;
+            font-weight: 600;
+            border-radius: 6px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .modal-nav-tab:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        .modal-nav-tab.active {
+            background: #ffffff;
+            color: var(--primary);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+            border-color: rgba(0, 0, 0, 0.04);
+        }
+
+        .modal-nav-tab.tab-wess {
+            color: #1d4ed8;
+        }
+
+        .modal-nav-tab.tab-wess.active {
+            background: #2563eb;
+            color: #ffffff;
+        }
+
         .code-box-wrapper {
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
             background: #ffffff;
             display: flex;
             flex-direction: column;
-            flex-shrink: 0;
+            width: 100% !important;
+            flex: 0 0 auto;
+            box-sizing: border-box;
         }
 
         .code-box-header {
@@ -1761,11 +1812,12 @@
                 <div id="modalErrorMessage" style="font-family: 'JetBrains Mono', monospace; font-size: 12px;"></div>
             </div>
 
-            <!-- View Selector Tabs: Both | Payload | Response -->
-            <div style="display: flex; gap: 8px; align-items: center; justify-content: flex-start; padding: 4px 0;">
-                <button type="button" class="btn btn-sm btn-primary" id="modalTabBoth" onclick="switchModalView('both')">View Both</button>
-                <button type="button" class="btn btn-sm btn-secondary" id="modalTabPayload" onclick="switchModalView('payload')">Expand Payload Only</button>
-                <button type="button" class="btn btn-sm btn-secondary" id="modalTabResponse" onclick="switchModalView('response')">Expand Response Only</button>
+            <!-- Segmented View Tabs: All | Webhook Payload | Response | WESS Raw -->
+            <div class="modal-nav-tabs" id="modalNavTabs">
+                <button type="button" class="modal-nav-tab active" id="modalTabBoth" onclick="switchModalView('both')">View All</button>
+                <button type="button" class="modal-nav-tab" id="modalTabPayload" onclick="switchModalView('payload')">Raw Webhook / Payload</button>
+                <button type="button" class="modal-nav-tab" id="modalTabResponse" onclick="switchModalView('response')">API Response</button>
+                <button type="button" class="modal-nav-tab tab-wess" id="modalTabWess" onclick="switchModalView('wess')" style="display: none;">WESS Raw JSON</button>
             </div>
 
             <!-- Payload Box -->
@@ -1784,6 +1836,18 @@
                     <button type="button" onclick="copyModalText('modalResponse')">Copy Response</button>
                 </div>
                 <pre class="code-block" id="modalResponse">{}</pre>
+            </div>
+
+            <!-- WESS Raw JSON Box -->
+            <div class="code-box-wrapper" id="modalWessWrapper" style="display: none; border-color: #93c5fd;">
+                <div class="code-box-header" style="background: #f0f7ff; color: #1e40af; border-bottom: 1px solid #bfdbfe;">
+                    <span style="font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                        WESS Raw API Data (Appointment / Customer JSON)
+                    </span>
+                    <button type="button" onclick="copyModalText('modalWessJson')">Copy WESS JSON</button>
+                </div>
+                <pre class="code-block" id="modalWessJson">{}</pre>
             </div>
         </div>
 
@@ -2983,28 +3047,60 @@
 
         // Pretty JSON Payload
         const payloadBox = document.getElementById('modalPayload');
+        let parsedPayload = null;
         try {
-            const parsed = typeof item.payload === 'string' ? JSON.parse(item.payload) : item.payload;
-            payloadBox.textContent = JSON.stringify(parsed || {}, null, 2);
+            parsedPayload = typeof item.payload === 'string' ? JSON.parse(item.payload) : item.payload;
+            payloadBox.textContent = JSON.stringify(parsedPayload || {}, null, 2);
         } catch(e) {
             payloadBox.textContent = String(item.payload || '{}');
         }
 
         // Pretty JSON Response
         const responseBox = document.getElementById('modalResponse');
+        let parsedResponse = null;
         if (!item.response_body) {
             responseBox.textContent = item.error_message
                 ? 'Error: ' + item.error_message
                 : (item.response_status ? 'HTTP ' + item.response_status + ': No response body returned' : 'No response body recorded.');
         } else {
             try {
-                const parsed = typeof item.response_body === 'string' ? JSON.parse(item.response_body) : item.response_body;
-                responseBox.textContent = (typeof parsed === 'object' && parsed !== null)
-                    ? JSON.stringify(parsed, null, 2)
-                    : String(parsed);
+                parsedResponse = typeof item.response_body === 'string' ? JSON.parse(item.response_body) : item.response_body;
+                responseBox.textContent = (typeof parsedResponse === 'object' && parsedResponse !== null)
+                    ? JSON.stringify(parsedResponse, null, 2)
+                    : String(parsedResponse);
             } catch(e) {
                 responseBox.textContent = String(item.response_body || 'No response body recorded.');
             }
+        }
+
+        // Extract Raw WESS JSON (Appointment / Customer / Multi-Appointments / Transaction)
+        let wessRaw = null;
+        if (parsedResponse && typeof parsedResponse === 'object') {
+            if (parsedResponse.wess_raw_appointment) wessRaw = parsedResponse.wess_raw_appointment;
+            else if (parsedResponse.wess_appointment) wessRaw = parsedResponse.wess_appointment;
+            else if (parsedResponse.wess_raw_customer) wessRaw = parsedResponse.wess_raw_customer;
+            else if (parsedResponse.wess_customer) wessRaw = parsedResponse.wess_customer;
+            else if (parsedResponse.wess_raw_appointments) wessRaw = parsedResponse.wess_raw_appointments;
+            else if (parsedResponse.wess_raw_response) wessRaw = parsedResponse.wess_raw_response;
+        }
+        if (!wessRaw && parsedPayload && typeof parsedPayload === 'object') {
+            if (parsedPayload.wess_raw_appointment) wessRaw = parsedPayload.wess_raw_appointment;
+            else if (parsedPayload.wess_raw_customer) wessRaw = parsedPayload.wess_raw_customer;
+            else if (parsedPayload.wess_raw_appointments) wessRaw = parsedPayload.wess_raw_appointments;
+        }
+
+        const wessWrapper = document.getElementById('modalWessWrapper');
+        const wessJsonBox = document.getElementById('modalWessJson');
+        const tabWess     = document.getElementById('modalTabWess');
+
+        if (wessRaw) {
+            wessJsonBox.textContent = JSON.stringify(wessRaw, null, 2);
+            wessWrapper.style.display = 'flex';
+            if (tabWess) tabWess.style.display = 'inline-block';
+        } else {
+            wessJsonBox.textContent = '{}';
+            wessWrapper.style.display = 'none';
+            if (tabWess) tabWess.style.display = 'none';
         }
 
         currentModalLogId = item.id;
@@ -3020,32 +3116,51 @@
     function switchModalView(view) {
         const payloadWrapper  = document.getElementById('modalPayloadWrapper');
         const responseWrapper = document.getElementById('modalResponseWrapper');
+        const wessWrapper     = document.getElementById('modalWessWrapper');
         const payloadBox      = document.getElementById('modalPayload');
         const responseBox     = document.getElementById('modalResponse');
+        const wessBox         = document.getElementById('modalWessJson');
         const btnBoth         = document.getElementById('modalTabBoth');
         const btnPayload      = document.getElementById('modalTabPayload');
         const btnResponse     = document.getElementById('modalTabResponse');
+        const btnWess         = document.getElementById('modalTabWess');
+        const hasWess         = (btnWess && btnWess.style.display !== 'none');
 
         if (!payloadWrapper || !responseWrapper) return;
 
-        btnBoth.className     = 'btn btn-sm btn-secondary';
-        btnPayload.className  = 'btn btn-sm btn-secondary';
-        btnResponse.className = 'btn btn-sm btn-secondary';
+        [btnBoth, btnPayload, btnResponse].forEach(b => {
+            if (b) b.className = 'modal-nav-tab';
+        });
+        if (btnWess) btnWess.className = 'modal-nav-tab tab-wess';
 
         if (view === 'payload') {
-            btnPayload.className          = 'btn btn-sm btn-primary';
+            if (btnPayload) btnPayload.className = 'modal-nav-tab active';
             payloadWrapper.style.display  = 'flex';
             responseWrapper.style.display = 'none';
+            if (wessWrapper) wessWrapper.style.display = 'none';
             payloadBox.style.maxHeight    = '450px';
         } else if (view === 'response') {
-            btnResponse.className         = 'btn btn-sm btn-primary';
+            if (btnResponse) btnResponse.className = 'modal-nav-tab active';
             payloadWrapper.style.display  = 'none';
             responseWrapper.style.display = 'flex';
+            if (wessWrapper) wessWrapper.style.display = 'none';
             responseBox.style.maxHeight   = '450px';
+        } else if (view === 'wess') {
+            if (btnWess) btnWess.className = 'modal-nav-tab tab-wess active';
+            payloadWrapper.style.display  = 'none';
+            responseWrapper.style.display = 'none';
+            if (wessWrapper) {
+                wessWrapper.style.display = 'flex';
+                wessBox.style.maxHeight   = '450px';
+            }
         } else {
-            btnBoth.className             = 'btn btn-sm btn-primary';
+            if (btnBoth) btnBoth.className = 'modal-nav-tab active';
             payloadWrapper.style.display  = 'flex';
             responseWrapper.style.display = 'flex';
+            if (wessWrapper && hasWess) {
+                wessWrapper.style.display = 'flex';
+                wessBox.style.maxHeight   = '240px';
+            }
             payloadBox.style.maxHeight    = '240px';
             responseBox.style.maxHeight   = '240px';
         }
@@ -3145,16 +3260,6 @@
         navigator.clipboard.writeText(text).then(() => {
             notify('success', 'Copied to Clipboard', 'JSON content copied.');
         });
-    }
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
     }
 
     /* ========================================================

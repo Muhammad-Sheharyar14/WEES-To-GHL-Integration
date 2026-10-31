@@ -4,6 +4,7 @@ use App\Http\Controllers\CustomPageController;
 use App\Http\Controllers\GhlOAuthController;
 use App\Http\Controllers\GhlWebhookController;
 use App\Http\Controllers\LogViewerController;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 
@@ -74,16 +75,17 @@ Route::get('/run-migrate', function () {
     try {
         Artisan::call('migrate', ['--force' => true]);
         $output = Artisan::output();
-        return '<pre style="background:#0f172a;color:#10b981;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
-            . "=== MIGRATION COMPLETED ===\n\n" 
-            . e($output ?: "Nothing to migrate.\n") 
-            . '</pre>';
-    } catch (\Throwable $e) {
-        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
-            . "=== MIGRATION ERROR ===\n\n" 
-            . e($e->getMessage()) . "\n\n" 
-            . e($e->getTraceAsString()) 
-            . '</pre>';
+
+        return '<pre style="background:#0f172a;color:#10b981;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">'
+            ."=== MIGRATION COMPLETED ===\n\n"
+            .e($output ?: "Nothing to migrate.\n")
+            .'</pre>';
+    } catch (Throwable $e) {
+        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">'
+            ."=== MIGRATION ERROR ===\n\n"
+            .e($e->getMessage())."\n\n"
+            .e($e->getTraceAsString())
+            .'</pre>';
     }
 });
 
@@ -91,41 +93,41 @@ Route::get('/run-oc', function () {
     try {
         Artisan::call('optimize:clear');
         $output = Artisan::output();
-        return '<pre style="background:#0f172a;color:#38bdf8;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
-            . "=== OPTIMIZE:CLEAR COMPLETED ===\n\n" 
-            . e($output) 
-            . '</pre>';
-    } catch (\Throwable $e) {
-        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
-            . "=== CLEAR ERROR ===\n\n" 
-            . e($e->getMessage()) 
-            . '</pre>';
+
+        return '<pre style="background:#0f172a;color:#38bdf8;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">'
+            ."=== OPTIMIZE:CLEAR COMPLETED ===\n\n"
+            .e($output)
+            .'</pre>';
+    } catch (Throwable $e) {
+        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">'
+            ."=== CLEAR ERROR ===\n\n"
+            .e($e->getMessage())
+            .'</pre>';
     }
 });
 
-Route::get('/run-sync', function (\Illuminate\Http\Request $request) {
+Route::get('/run-sync', function (Request $request) {
     try {
         $testParam = $request->query('test');
         $params = [];
         if ($testParam !== null && is_numeric($testParam)) {
-            $limit = max(1, (int)$testParam);
+            $limit = max(1, (int) $testParam);
             $params['--limit'] = $limit;
-            $params['--test']  = true;
+            $params['--test'] = true;
         }
 
         Artisan::call('wess:sync', $params);
         $output = Artisan::output();
-        return '<pre style="background:#0f172a;color:#10b981;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
-            . "=== WESS SYNC COMPLETED" . (isset($limit) ? " [TEST RUN: {$limit} appointment(s)]" : "") . " ===\n\n" 
-            . e($output ?: "No locations to sync.\n") 
-            . '</pre>';
-    } catch (\Throwable $e) {
-        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">' 
-            . "=== WESS SYNC ERROR ===\n\n" 
-            . e($e->getMessage()) . "\n\n" 
-            . e($e->getTraceAsString()) 
-            . '</pre>';
+
+        return '<pre style="background:#0f172a;color:#10b981;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">'
+            .'=== WESS SYNC COMPLETED'.(isset($limit) ? " [TEST RUN: {$limit} appointment(s)]" : '')." ===\n\n"
+            .e($output ?: "No locations to sync.\n")
+            .'</pre>';
+    } catch (Throwable $e) {
+        return '<pre style="background:#0f172a;color:#ef4444;padding:24px;border-radius:8px;font-family:monospace;font-size:14px;line-height:1.5;">'
+            ."=== WESS SYNC ERROR ===\n\n"
+            .e($e->getMessage())."\nFile: ".e($e->getFile())."\nLine: ".$e->getLine()."\n\n"
+            .e($e->getTraceAsString())
+            .'</pre>';
     }
 });
-
-

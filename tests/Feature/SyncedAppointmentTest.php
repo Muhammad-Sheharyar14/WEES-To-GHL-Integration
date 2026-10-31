@@ -552,7 +552,6 @@ class SyncedAppointmentTest extends TestCase
 
     public function test_wess_cancellation_status_bc_cancels_crm_appointment_during_sync(): void
     {
-        $this->markTestSkipped('WESS cancellation propagation disabled per user request: WESS does not return cancelled appointments via GET.');
         $config = WessConfig::where('location_id', 'loc_test_sync')->first();
 
         // Existing active booking in CRM
@@ -624,6 +623,177 @@ class SyncedAppointmentTest extends TestCase
         // Verify local mapping updated to cancelled
         $synced->refresh();
         $this->assertEquals('cancelled', $synced->status);
+    }
+
+    public function test_wess_cancellation_status_lm_cancels_crm_appointment_during_sync(): void
+    {
+        $config = WessConfig::where('location_id', 'loc_test_sync')->first();
+
+        // Existing active booking in CRM
+        $synced = SyncedAppointment::create([
+            'location_id'         => 'loc_test_sync',
+            'wess_appointment_id' => '3502',
+            'ghl_appointment_id'  => 'ghl_event_3502',
+            'ghl_contact_id'      => 'cnt_jane_3502',
+            'calendar_id'         => 'cal_wess_123',
+            'status'              => 'confirmed',
+            'start_time'          => now()->addDays(2)->format('Y-m-d H:i:s'),
+            'sync_hash'           => 'old_hash_3502',
+        ]);
+
+        $hasGhlCancelled = false;
+
+        Http::fake([
+            // WESS returns appointment 3502 with status 'Last Minute Cancel' (code LM in WESS)
+            'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
+                'data' => [
+                    [
+                        'id'              => 3502,
+                        'date'            => now()->addDays(2)->format('Y-m-d H:i:s'),
+                        'status'          => 'Last Minute Cancel',
+                        'processing_time' => 45,
+                        'service_name'    => 'Scalp Treatment',
+                        'customer'        => [
+                            'first_name'   => 'Jane',
+                            'last_name'    => 'Doe',
+                            'phone_mobile' => '+6591234567',
+                        ],
+                    ],
+                ],
+                'meta' => [
+                    'pagination' => [
+                        'total'        => 1,
+                        'count'        => 1,
+                        'per_page'     => 100,
+                        'current_page' => 1,
+                        'total_pages'  => 1,
+                    ],
+                ],
+            ], 200),
+            // GHL receives cancellation for ghl_event_3502
+            'https://services.leadconnectorhq.com/calendars/events/appointments/ghl_event_3502*' => function ($request) use (&$hasGhlCancelled) {
+                $hasGhlCancelled = true;
+                return Http::response(['success' => true], 200);
+            },
+            'https://services.leadconnectorhq.com/calendars/events*' => Http::response([
+                'events' => []
+            ], 200),
+            'https://services.leadconnectorhq.com/users*' => Http::response([
+                'users' => []
+            ], 200),
+            'https://services.leadconnectorhq.com/contacts/*' => Http::response([
+                'contact' => ['id' => 'cnt_jane_3502']
+            ], 200),
+            'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
+                'customFields' => []
+            ], 200),
+        ]);
+
+        $service = app(WessSyncService::class);
+        $result = $service->syncLocation($config);
+
+        $this->assertEquals('success', $result['status']);
+        $this->assertTrue($hasGhlCancelled, 'GHL cancellation should have been triggered for LM cancelled WESS appointment 3502!');
+
+        // Verify local mapping updated to cancelled
+        $synced->refresh();
+        $this->assertEquals('cancelled', $synced->status);
+    }
+
+    public function test_wess_cancellation_preserves_rescheduled_ghl_appointment(): void
+    {
+        $config = WessConfig::where('location_id', 'loc_test_sync')->first();
+        $commonGhlApptId = 'ghl_rescheduled_event_888';
+
+        // 1. Old booking (#3501) that was cancelled during reschedule
+        $oldSync = SyncedAppointment::create([
+            'location_id'         => 'loc_test_sync',
+            'wess_appointment_id' => '3501',
+            'ghl_appointment_id'  => $commonGhlApptId,
+            'ghl_contact_id'      => 'cnt_jane_3501',
+            'calendar_id'         => 'cal_wess_123',
+            'status'              => 'confirmed', // was active previously
+            'start_time'          => now()->addDays(1)->format('Y-m-d H:i:s'),
+            'sync_hash'           => 'old_hash',
+        ]);
+
+        // 2. New active rescheduled booking (#3503) for the same GHL event
+        $activeRescheduleSync = SyncedAppointment::create([
+            'location_id'         => 'loc_test_sync',
+            'wess_appointment_id' => '3503',
+            'ghl_appointment_id'  => $commonGhlApptId,
+            'ghl_contact_id'      => 'cnt_jane_3501',
+            'calendar_id'         => 'cal_wess_123',
+            'status'              => 'confirmed', // active!
+            'start_time'          => now()->addDays(3)->format('Y-m-d H:i:s'),
+            'sync_hash'           => 'new_hash_3503',
+        ]);
+
+        $hasGhlCancelled = false;
+
+        Http::fake([
+            // WESS returns the cancelled old appointment #3501
+            'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
+                'data' => [
+                    [
+                        'id'              => 3501,
+                        'date'            => now()->addDays(1)->format('Y-m-d H:i:s'),
+                        'status'          => 'Last Minute Cancel',
+                        'processing_time' => 60,
+                        'service_name'    => 'Hair Wash',
+                        'customer'        => [
+                            'first_name'   => 'Jane',
+                            'last_name'    => 'Doe',
+                            'phone_mobile' => '+6591234567',
+                        ],
+                    ],
+                ],
+                'meta' => [
+                    'pagination' => [
+                        'total'        => 1,
+                        'count'        => 1,
+                        'per_page'     => 100,
+                        'current_page' => 1,
+                        'total_pages'  => 1,
+                    ],
+                ],
+            ], 200),
+            // If GHL cancellation is triggered for the common GHL event, capture it (should NOT be called!)
+            'https://services.leadconnectorhq.com/calendars/events/appointments/' . $commonGhlApptId . '*' => function ($request) use (&$hasGhlCancelled) {
+                if ($request->method() === 'DELETE' || ($request->method() === 'PUT' && ($request->data()['appointmentStatus'] ?? '') === 'cancelled')) {
+                    $hasGhlCancelled = true;
+                }
+                return Http::response(['success' => true], 200);
+            },
+            'https://services.leadconnectorhq.com/calendars/events*' => Http::response([
+                'events' => []
+            ], 200),
+            'https://services.leadconnectorhq.com/users*' => Http::response([
+                'users' => []
+            ], 200),
+            'https://services.leadconnectorhq.com/contacts/*' => Http::response([
+                'contact' => ['id' => 'cnt_jane_3501']
+            ], 200),
+            'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
+                'customFields' => []
+            ], 200),
+        ]);
+
+        $service = app(WessSyncService::class);
+        $result = $service->syncLocation($config);
+
+        $this->assertEquals('success', $result['status']);
+
+        // CRITICAL ASSERTION: The GHL appointment must NOT have been cancelled!
+        $this->assertFalse($hasGhlCancelled, 'GHL appointment was cancelled despite having an active rescheduled booking (#3503)!');
+
+        // Verify old booking record updated to cancelled locally
+        $oldSync->refresh();
+        $this->assertEquals('cancelled', $oldSync->status);
+
+        // Verify new rescheduled booking remains confirmed
+        $activeRescheduleSync->refresh();
+        $this->assertEquals('confirmed', $activeRescheduleSync->status);
     }
 }
 

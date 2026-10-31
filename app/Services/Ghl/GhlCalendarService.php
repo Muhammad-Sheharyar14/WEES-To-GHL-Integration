@@ -21,6 +21,11 @@ class GhlCalendarService
         $this->baseUrl     = rtrim(config('ghl.base_url', 'https://services.leadconnectorhq.com'), '/');
     }
 
+    public function getBaseUrl(): string
+    {
+        return $this->baseUrl;
+    }
+
     /**
      * Helper for authorized GHL requests
      */
@@ -668,15 +673,23 @@ class GhlCalendarService
                 ? ($method === 'PUT' ? 'GhlCalendarSlotUpdated' : 'GhlCalendarSlotBlocked')
                 : ($method === 'PUT' ? 'GhlCalendarEventUpdated' : 'GhlCalendarEventCreated');
 
+            $logResponseBody = [
+                'ghl_response'         => $resData,
+                'wess_raw_appointment' => $wessAppointment,
+            ];
+
             WebhookLog::create([
                 'source'          => 'wess_sync',
                 'location_id'     => $locationId,
                 'event_type'      => $eventType,
                 'endpoint'        => "{$this->baseUrl}/{$endpoint}",
                 'method'          => $method,
-                'payload'         => $payload,
+                'payload'         => [
+                    'crm_payload'          => $payload,
+                    'wess_raw_appointment' => $wessAppointment,
+                ],
                 'response_status' => $statusCode,
-                'response_body'   => substr($res->body(), 0, 1000),
+                'response_body'   => json_encode($logResponseBody),
             ]);
 
             if ($res->failed()) {
@@ -762,6 +775,7 @@ class GhlCalendarService
 
     /**
      * Cancel or delete an appointment on the CRM calendar
+     * Updates appointment status to 'cancelled' (preserving calendar history & freeing the slot)
      */
     public function cancelAppointmentInGhl(string $locationId, string $ghlAppointmentId): bool
     {
@@ -769,26 +783,26 @@ class GhlCalendarService
             // Echo Loop Prevention: Tag cancelled CRM appointment in cache for 45s
             Cache::put("wess_origin_appt_{$ghlAppointmentId}", true, now()->addSeconds(45));
 
-            // 1. Try deleting via appointment endpoint
-            $delRes = $this->ghlRequest('DELETE', "calendars/events/appointments/{$ghlAppointmentId}", $locationId);
-            if ($delRes->successful() || $delRes->status() === 404) {
-                Log::info("Successfully deleted CRM appointment {$ghlAppointmentId} after WESS cancellation.");
+            // 1. Update appointment status to 'cancelled' (preserves history in CRM calendar)
+            $putRes = $this->ghlRequest('PUT', "calendars/events/appointments/{$ghlAppointmentId}", $locationId, [
+                'appointmentStatus' => 'cancelled',
+            ]);
+            if ($putRes->successful() || $putRes->status() === 404) {
+                Log::info("Successfully updated CRM appointment {$ghlAppointmentId} status to 'cancelled'.");
                 return true;
             }
 
-            // 2. Try deleting via block-slots endpoint
+            // 2. Fallback: If it was a block-slot, delete via block-slots endpoint
             $blockDel = $this->ghlRequest('DELETE', "calendars/events/block-slots/{$ghlAppointmentId}", $locationId);
             if ($blockDel->successful() || $blockDel->status() === 404) {
                 Log::info("Successfully deleted CRM block-slot {$ghlAppointmentId} after WESS cancellation.");
                 return true;
             }
 
-            // 3. Fallback: Update status to 'cancelled'
-            $putRes = $this->ghlRequest('PUT', "calendars/events/appointments/{$ghlAppointmentId}", $locationId, [
-                'appointmentStatus' => 'cancelled',
-            ]);
-            if ($putRes->successful() || $putRes->status() === 404) {
-                Log::info("Successfully updated CRM appointment {$ghlAppointmentId} status to 'cancelled'.");
+            // 3. Fallback: If PUT failed, try deleting via appointment endpoint
+            $delRes = $this->ghlRequest('DELETE', "calendars/events/appointments/{$ghlAppointmentId}", $locationId);
+            if ($delRes->successful() || $delRes->status() === 404) {
+                Log::info("Successfully deleted CRM appointment {$ghlAppointmentId} after WESS cancellation fallback.");
                 return true;
             }
 
@@ -901,8 +915,8 @@ class GhlCalendarService
                 $wessApptId = $matches[1];
             }
 
-            // 2. Fallback: Check title if notes signature was altered (e.g. "(WESS #12345)")
-            if (!$wessApptId && !empty($event['title']) && preg_match('/#(\d{5,})/i', $event['title'], $matches)) {
+            // 2. Fallback: Check title if notes signature was altered (e.g. "(WESS #12345)" or "#3516")
+            if (!$wessApptId && !empty($event['title']) && preg_match('/#(\d+)/i', $event['title'], $matches)) {
                 $wessApptId = $matches[1];
             }
 

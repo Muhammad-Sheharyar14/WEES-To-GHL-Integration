@@ -245,7 +245,7 @@ class GhlWebhookController extends Controller
                         if (preg_match('/WESS\s+Booking\s+ID:\s*([0-9a-zA-Z_-]+)/i', $rawNotes, $m)) {
                             $wessApptId = $m[1];
                             Log::info("Cancellation Auto-Recovery: Found WESS Booking ID {$wessApptId} in appointment notes.");
-                        } elseif (preg_match('/#(\d{5,})/i', $rawTitle, $m)) {
+                        } elseif (preg_match('/#(\d+)/i', $rawTitle, $m)) {
                             $wessApptId = $m[1];
                             Log::info("Cancellation Auto-Recovery: Found WESS Booking ID {$wessApptId} in appointment title.");
                         } elseif (is_numeric($appointmentId) || preg_match('/^appt_(\d+)$/', (string)$appointmentId)) {
@@ -269,7 +269,7 @@ class GhlWebhookController extends Controller
                                         $wessApptId = $m[1];
                                         Log::info("Cancellation Auto-Recovery: Found WESS Booking ID {$wessApptId} from CRM calendar event notes.");
                                         break;
-                                    } elseif (preg_match('/#(\d{5,})/i', $evTitle, $m)) {
+                                    } elseif (preg_match('/#(\d+)/i', $evTitle, $m)) {
                                         $wessApptId = $m[1];
                                         Log::info("Cancellation Auto-Recovery: Found WESS Booking ID {$wessApptId} from CRM calendar event title.");
                                         break;
@@ -380,7 +380,13 @@ class GhlWebhookController extends Controller
                             'endpoint'        => $endpoint,
                             'method'          => 'PATCH',
                             'response_status' => 200,
-                            'response_body'   => json_encode($res),
+                            'response_body'   => json_encode(array_merge(
+                                is_array($res) ? $res : ['result' => $res],
+                                [
+                                    'wess_raw_response' => $res,
+                                    'wess_appointment_id' => $wessApptId,
+                                ]
+                            )),
                         ]);
                     } else {
                         Log::warning("Cancellation skipped for appointment {$appointmentId}: No corresponding WESS booking ID found.");
@@ -941,6 +947,8 @@ class GhlWebhookController extends Controller
                     'wess_appointment_id'     => $wessAppointment['id'] ?? null,
                     'wess_customer'           => $customer,
                     'wess_appointment'        => $wessAppointment,
+                    'wess_raw_appointment'    => $wessAppointment,
+                    'wess_raw_customer'       => $customer,
                     'branch_id'               => $branchId,
                     'start_time'              => $apptDate,
                 ]),
@@ -1257,7 +1265,12 @@ class GhlWebhookController extends Controller
                 'endpoint'        => $endpoint,
                 'method'          => 'POST',
                 'response_status' => 200,
-                'response_body'   => json_encode(['wess_customer' => $customer]),
+                'response_body'   => json_encode([
+                    'status'            => 'synced',
+                    'message'           => "Contact {$ghlId} synced with WESS customer.",
+                    'wess_customer'     => $customer,
+                    'wess_raw_customer' => $customer,
+                ]),
             ]);
         } catch (Exception $e) {
             Log::error("Failed to sync contact for location {$locationId}: " . $e->getMessage());

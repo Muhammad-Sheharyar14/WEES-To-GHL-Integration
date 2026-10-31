@@ -69,7 +69,7 @@ class TherapistCalendarSyncTest extends TestCase
                     [
                         'id'              => 5002,
                         'date'            => '2026-11-21T14:00:00Z',
-                        'status'          => 'Cancelled',
+                        'status'          => 'Confirmed',
                         'processing_time' => 45,
                         'service_name'    => 'Facial Glow',
                         'customer'        => [
@@ -161,7 +161,7 @@ class TherapistCalendarSyncTest extends TestCase
             'wess_appointment_id' => '5002',
             'calendar_id'         => 'cal_cherry_personal',
             'assigned_user_id'    => 'usr_cherry_888',
-            'status'              => 'Cancelled',
+            'status'              => 'Confirmed',
         ]);
     }
 

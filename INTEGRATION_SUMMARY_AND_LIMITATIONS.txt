@@ -1,0 +1,147 @@
+================================================================================
+WESS <-> CRM (MINICHATX) INTEGRATION: SUMMARY & LATEST UPDATES
+================================================================================
+Project: Ample Life WESS & CRM (MiniChatX) Integration
+Environment: Laravel 11 / PHP 8.2 / CRM Marketplace App
+
+--------------------------------------------------------------------------------
+NEW UPDATES: DISCOVERY & RESOLUTION OF CANCELLED APPOINTMENTS (WESS -> CRM)
+--------------------------------------------------------------------------------
+
+1. Discovery via Customer Transactions:
+   - By inspecting individual customer transaction records in WESS 
+     (GET /branches/{branch}/customers/{customer}/sales/transaction), we noticed 
+     that the actual internal status assigned by WESS for cancelled appointments 
+     is "LM" (Last Minute Cancel), which was not documented in standard API guides.
+
+2. Branch-Wide Batch Retrieval Enabled:
+   - Armed with this discovery, we tested querying branch batch appointments with 
+     the "LM" status included in the filter:
+     filter[status]=OP,RQ,CF,CI,CO,LM,BC,NS,VD
+   - This immediately succeeded in retrieving all cancelled appointment records 
+     across the entire branch in standard batch requests.
+
+3. Resolved Appointment Cancellation & Update Logic:
+   - Being able to fetch cancelled appointments solved the entire two-way 
+     cancellation and update logic between WESS and CRM (MiniChatX).
+   - When an appointment is marked cancelled in WESS (with status LM, BC, NS, or VD), 
+     the sync automatically identifies the corresponding CRM (MiniChatX) appointment.
+   - Non-Destructive Status Update: The integration sends a PUT request to CRM 
+     (PUT /calendars/events/appointments/{id}) with appointmentStatus: "cancelled". 
+     This preserves the appointment in the customer's history and calendar with 
+     a "Cancelled" badge while immediately freeing the slot for new bookings.
+   - Reschedule Safeguard: When an appointment is rescheduled, the sync checks if 
+     an active rescheduled booking exists under the same CRM calendar event. If 
+     active, it preserves the CRM appointment and avoids accidental cancellation.
+   - Self-Healing Layer-2 Recovery: If a cancelled appointment exists on the CRM 
+     calendar but is missing from the local database, the sync automatically 
+     locates the CRM event, marks it as cancelled, and saves the record.
+
+
+--------------------------------------------------------------------------------
+CORE INTEGRATION FEATURES & CAPABILITIES
+--------------------------------------------------------------------------------
+
+A. TWO-WAY APPOINTMENT SYNCHRONIZATION
+   1. CRM to WESS (Instant Real-Time Webhooks):
+      - When an appointment is created or updated in CRM (MiniChatX), a webhook fires
+        instantly to create or update the appointment in WESS.
+      - Resolves the customer in WESS by mobile phone number; if the customer 
+        does not exist, automatically creates a new customer profile in WESS.
+      - Routes the appointment to the assigned therapist/staff member in WESS.
+      - Automatically maps the treatment/service and duration.
+
+   2. WESS to CRM (Scheduled & Instant Sync):
+      - Synchronizes appointments from WESS Appointment Book into CRM Calendars.
+      - Automatically splits large date ranges into 30-day chunks for smooth
+        and reliable querying.
+      - Includes instant browser testing route (GET /run-sync and /run-sync?test=5)
+        and server CLI command (php artisan wess:sync).
+
+B. CONTACT & CUSTOMER MANAGEMENT
+   1. Customer Phone Lookup & Normalization:
+      - Smart Singapore mobile formatting (+65 defaults, stripping local zeros, 
+        matching 8-digit mobile formats).
+      - Checks existing WESS profiles via GET /customers/lookup/phone-number/{phone}.
+
+   2. Mandatory Data Validation:
+      - Enforces first name, last name, and valid mobile number before attempting 
+        to create customers in WESS, avoiding dirty data or API rejection.
+
+   3. Custom Field & Tag Mapping:
+      - Automatically saves and pushes WESS Customer Code (e.g. CS00013-1) and 
+        Last Visit Date into CRM contact custom fields.
+      - Automatically tags synced CRM contacts with the "WESS" tag.
+
+C. LOOP PREVENTION & RESILIENCE
+   1. Multi-Layer Ping-Pong Echo Loop Prevention:
+      - In-memory cache flags (wess_origin_appt_{id}) suppress webhook echoes for 
+        45 seconds after sync.
+      - Signature metadata inspection ("WESS Booking ID: ...", "#XXXX") prevents 
+        incoming webhooks from re-creating appointments already synced from WESS.
+      - Sync hash deduplication: Skips unchanged appointments, eliminating 
+        redundant API calls and preventing duplicate calendar events.
+
+D. GAP CATCH-UP RECOVERY (SODT)
+   1. Switched Off Date & Time Tracking:
+      - When Master Sync is turned OFF, the system records the exact timestamp.
+      - When Master Sync is toggled back ON, the system executes an automated 
+        catch-up sync starting from the paused timestamp to the present, recovering 
+        any appointments created or modified while sync was off.
+      - Includes a manual "Override SODT" editor on the Custom Page to inspect, 
+        adjust, set to now, or clear the recovery pointer.
+
+
+--------------------------------------------------------------------------------
+CONTACT & CUSTOMER DATA LIMITATIONS & BEHAVIORS
+--------------------------------------------------------------------------------
+
+1. Multi-Layer Customer Matching & Creation Flow (CRM -> WESS):
+   - When an appointment or contact syncs from CRM (MiniChatX) to WESS:
+     * Layer 1 (CRM Custom Field Check): The sync first inspects CRM contact custom 
+       fields for an existing WESS Customer Code / WESS ID. If present, it binds 
+       directly to that existing profile and strictly blocks duplicate customer creation.
+     * Layer 2 (Phone Lookup Fallback): If no WESS code is in CRM, it queries WESS 
+       via GET /customers/lookup/phone-number/{phone} across all normalized 
+       Singapore phone formats (+65, 65, and 8-digit local mobile numbers).
+     * Layer 3 (Customer Creation Fallback): Only if all search layers return no match, 
+       and valid contact details (full name and valid mobile number) are present, 
+       does the system create a new customer record in WESS (POST /branches/{branch}/customers).
+
+2. No Endpoint to Update Existing Customers in WESS:
+   - The WESS API does not provide an endpoint to update existing customer profiles 
+     (there is no PUT or PATCH /customers/{id} API in WESS).
+   - Edits made to customer details (such as name, email, or address) in CRM (MiniChatX) 
+     cannot be pushed back to WESS via API. Any post-creation customer updates 
+     must be made directly within the WESS portal.
+
+3. Omitted Contact Fields in WESS API (Singapore PDPA Privacy Guidelines):
+   - In accordance with Singapore data privacy regulations (PDPA - Personal Data 
+     Protection Act) and WESS data privacy policies, sensitive personal identifiable 
+     information (such as full residential street address, postal code, city, 
+     date of birth, and NRIC/FIN) is restricted and omitted from WESS online booking 
+     API endpoints.
+   - WESS API payloads supply only operational scheduling data (customer code, 
+     name, mobile number, and booking schedule). Consequently, CRM contact address 
+     fields cannot be populated from WESS sync.
+
+4. Customer Lookup by WESS Customer ID, Code & Phone (No Email Lookup):
+   - The integration successfully searches and resolves WESS customers using their 
+     WESS Customer ID (GET /branches/{branch}/customers/{id}), WESS Customer Code 
+     (GET /branches/{branch}/customers?filter[code]={code}), or normalized mobile phone 
+     number (GET /customers/lookup/phone-number/{phone}).
+   - However, WESS provides no endpoint to look up or match customers by email 
+     address or by external CRM ID. Customer matching between systems relies strictly 
+     on the WESS Customer ID/Code and normalized mobile numbers.
+
+5. Mandatory Mobile Number for Contact Creation:
+   - Creating a customer in WESS strictly requires a valid mobile phone number. 
+     Contacts created in CRM without a phone number cannot be provisioned into WESS.
+
+6. NRIC / IC Number Permission Restrictions:
+   - WESS restricts saving national identity numbers (NRIC/FIN) via the API unless 
+     explicit administrative permissions ('online.core.customer.index') are granted 
+     on the API bearer token. If unpermitted, the integration safely omits this field 
+     to prevent API customer creation failures.
+
+
