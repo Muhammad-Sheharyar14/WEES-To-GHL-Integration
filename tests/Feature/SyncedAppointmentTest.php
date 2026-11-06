@@ -795,5 +795,118 @@ class SyncedAppointmentTest extends TestCase
         $activeRescheduleSync->refresh();
         $this->assertEquals('confirmed', $activeRescheduleSync->status);
     }
+
+    public function test_wess_therapist_change_cancels_old_calendar_event_and_creates_on_new_calendar(): void
+    {
+        \Illuminate\Support\Facades\Cache::flush();
+        $config = WessConfig::where('location_id', 'loc_test_sync')->first();
+
+        $empKeyPamela = '10685Pamela';
+        $oldHash = md5('2026-11-20T10:00:00Z' . 'confirmed' . 60 . 'Facial' . 'Jane Doe' . $empKeyPamela);
+
+        $existingSync = SyncedAppointment::create([
+            'location_id'         => 'loc_test_sync',
+            'wess_appointment_id' => '9001',
+            'ghl_appointment_id'  => 'ghl_appt_on_pamela_calendar',
+            'ghl_contact_id'      => 'cnt_jane_9001',
+            'calendar_id'         => 'cal_pamela',
+            'assigned_user_id'    => 'user_pamela',
+            'status'              => 'confirmed',
+            'start_time'          => '2026-11-20 10:00:00',
+            'sync_hash'           => $oldHash,
+        ]);
+
+        $oldCalendarCancelled = false;
+        $newCalendarCreated = false;
+
+        Http::fake([
+            // 1. Specific appointment booking endpoints MUST be listed before calendars* wildcard
+            'https://services.leadconnectorhq.com/calendars/events/appointments/ghl_appt_on_pamela_calendar*' => function ($request) use (&$oldCalendarCancelled) {
+                $oldCalendarCancelled = true;
+                return Http::response(['success' => true], 200);
+            },
+
+            'https://services.leadconnectorhq.com/calendars/events/appointments' => function ($request) use (&$newCalendarCreated) {
+                $data = $request->data();
+                if (($data['calendarId'] ?? '') === 'cal_lavender') {
+                    $newCalendarCreated = true;
+                }
+                return Http::response([
+                    'id'         => 'ghl_appt_on_lavender_calendar',
+                    'calendarId' => 'cal_lavender',
+                    'status'     => 'confirmed',
+                ], 201);
+            },
+
+            // 2. WESS appointment returned with therapist Lavender (changed from Pamela)
+            'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
+                'data' => [
+                    [
+                        'id'              => 9001,
+                        'date'            => '2026-11-20T10:00:00Z',
+                        'status'          => 'confirmed',
+                        'processing_time' => 60,
+                        'service_name'    => 'Facial',
+                        'customer'        => [
+                            'id'           => 555,
+                            'first_name'   => 'Jane',
+                            'last_name'    => 'Doe',
+                            'phone_mobile' => '+6591234567',
+                        ],
+                        'employees'       => [
+                            ['id' => 10684, 'first_name' => 'Lavender', 'salutation' => 'MS'],
+                        ],
+                    ],
+                ],
+                'meta' => [
+                    'pagination' => [
+                        'total'        => 1,
+                        'count'        => 1,
+                        'per_page'     => 100,
+                        'current_page' => 1,
+                        'total_pages'  => 1,
+                    ],
+                ],
+            ], 200),
+
+            // 3. Therapist Map & Calendar List endpoints
+            'https://services.leadconnectorhq.com/users*' => Http::response([
+                'users' => [
+                    ['id' => 'user_lavender', 'name' => 'Lavender', 'email' => 'lavender@ample.com'],
+                    ['id' => 'user_pamela', 'name' => 'Pamela', 'email' => 'pamela@ample.com'],
+                ]
+            ], 200),
+            'https://services.leadconnectorhq.com/calendars*' => Http::response([
+                'calendars' => [
+                    ['id' => 'cal_lavender', 'name' => 'Lavender Calendar', 'userId' => 'user_lavender'],
+                    ['id' => 'cal_pamela', 'name' => 'Pamela Calendar', 'userId' => 'user_pamela'],
+                ]
+            ], 200),
+            'https://api.prelive.wessconnect.net/api/v1/online/branches/1/employees*' => Http::response([
+                'data' => [
+                    ['id' => 10684, 'first_name' => 'Lavender', 'salutation' => 'MS'],
+                    ['id' => 10685, 'first_name' => 'Pamela', 'salutation' => 'MS'],
+                ]
+            ], 200),
+
+            'https://services.leadconnectorhq.com/contacts/*' => Http::response([
+                'contact' => ['id' => 'cnt_jane_9001']
+            ], 200),
+            'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
+                'customFields' => []
+            ], 200),
+        ]);
+
+        $service = app(WessSyncService::class);
+        $result = $service->syncLocation($config);
+
+        $this->assertEquals('success', $result['status']);
+        $this->assertTrue($oldCalendarCancelled, 'Old appointment on Pamela calendar was not cancelled!');
+        $this->assertTrue($newCalendarCreated, 'New appointment on Lavender calendar was not created!');
+
+        $existingSync->refresh();
+        $this->assertEquals('cal_lavender', $existingSync->calendar_id);
+        $this->assertEquals('ghl_appt_on_lavender_calendar', $existingSync->ghl_appointment_id);
+    }
 }
 

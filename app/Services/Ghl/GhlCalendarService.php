@@ -560,6 +560,7 @@ class GhlCalendarService
         }
 
         $existingGhlId = $existingRecord?->ghl_appointment_id;
+        $existingCalId = $existingRecord?->calendar_id;
         $isUpdate      = !empty($existingGhlId);
 
         // Layer 2 Real-Time Duplicate Check: If not in synced_appointments, check if CRM already has this event
@@ -570,6 +571,21 @@ class GhlCalendarService
                 $isUpdate      = true;
                 Log::info("Layer 2: Detected existing CRM appointment {$existingGhlId} for WESS #{$wessApptId}. Updating via PUT to prevent duplicate.");
             }
+        }
+
+        // Calendar Reassignment: If therapist/calendar changed in WESS,
+        // GHL API does not allow moving calendarId on an existing appointment via PUT.
+        // We cancel the old event on the prior calendar, then create fresh on the new therapist calendar.
+        $calendarChanged = $isUpdate && !empty($existingCalId) && !empty($calendarId) && ($existingCalId !== $calendarId);
+        if ($calendarChanged) {
+            Log::info("Appointment WESS #{$wessApptId} moved from calendar {$existingCalId} to {$calendarId}. Cancelling old appointment {$existingGhlId} and creating on new calendar.");
+            try {
+                $this->cancelAppointmentInGhl($locationId, $existingGhlId);
+            } catch (\Throwable $cancelEx) {
+                Log::warning("Could not cancel old calendar appointment {$existingGhlId}: " . $cancelEx->getMessage());
+            }
+            $isUpdate      = false;
+            $existingGhlId = null;
         }
 
         try {
@@ -583,9 +599,9 @@ class GhlCalendarService
                 $method   = 'PUT';
                 $res      = $this->ghlRequest('PUT', $endpoint, $locationId, $payload);
 
-                // If GHL returned 404 (e.g. appointment was deleted in GHL UI), fall back to re-creating via POST
-                if ($res->status() === 404) {
-                    Log::info("Existing GHL appointment {$existingGhlId} not found in GHL (404). Re-creating via POST.");
+                // If GHL returned 404 or 400 (event id is invalid/deleted in GHL), fall back to re-creating via POST
+                if ($res->status() === 404 || ($res->status() === 400 && str_contains(strtolower($res->body()), 'invalid'))) {
+                    Log::info("Existing GHL appointment {$existingGhlId} not found or invalid in GHL ({$res->status()}). Re-creating via POST.");
                     $endpoint = 'calendars/events/appointments';
                     $method   = 'POST';
                     $res      = !empty($contactId) ? $this->ghlRequest('POST', $endpoint, $locationId, $payload) : null;
@@ -702,7 +718,16 @@ class GhlCalendarService
 
             // Persist to synced_appointments DB table to permanently track and prevent duplicate bookings
             if ($wessApptId && $savedGhlId) {
-                $syncHash = md5(($wessAppointment['date'] ?? '') . ($wessAppointment['status'] ?? '') . ($wessAppointment['processing_time'] ?? '') . ($wessAppointment['service_name'] ?? $wessAppointment['service'] ?? '') . ($wessAppointment['customer_name'] ?? ''));
+                $empKey = '';
+                if (!empty($wessAppointment['employees']) && is_array($wessAppointment['employees'])) {
+                    foreach ($wessAppointment['employees'] as $emp) {
+                        $empKey .= ($emp['id'] ?? '') . ($emp['first_name'] ?? '') . ($emp['code'] ?? '');
+                    }
+                } else {
+                    $empKey = (string) ($wessAppointment['employee_id'] ?? ($wessAppointment['staff_id'] ?? ''));
+                }
+
+                $syncHash = md5(($wessAppointment['date'] ?? '') . ($wessAppointment['status'] ?? '') . ($wessAppointment['processing_time'] ?? '') . ($wessAppointment['service_name'] ?? $wessAppointment['service'] ?? '') . ($wessAppointment['customer_name'] ?? '') . $empKey);
 
                 SyncedAppointment::updateOrCreate(
                     [

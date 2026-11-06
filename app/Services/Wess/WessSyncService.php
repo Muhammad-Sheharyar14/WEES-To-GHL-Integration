@@ -215,7 +215,7 @@ class WessSyncService
                         'last minute cancel', 'last-minute cancel', 'lm',
                         'booking cancelled', 'booking cancel', 'bc',
                         'no show', 'no-show', 'ns',
-                        'void', 'vd',
+                        'void', 'vd', 'voided',
                     ], true);
 
                     if ($isCancelledInWess) {
@@ -328,7 +328,16 @@ class WessSyncService
                         continue;
                     }
 
-                    $apptHash = md5(($appt['date'] ?? '').($appt['status'] ?? '').($appt['processing_time'] ?? '').($appt['service_name'] ?? $appt['service'] ?? '').($appt['customer_name'] ?? ''));
+                    $empKey = '';
+                    if (!empty($appt['employees']) && is_array($appt['employees'])) {
+                        foreach ($appt['employees'] as $emp) {
+                            $empKey .= ($emp['id'] ?? '') . ($emp['first_name'] ?? '') . ($emp['code'] ?? '');
+                        }
+                    } else {
+                        $empKey = (string) ($appt['employee_id'] ?? ($appt['staff_id'] ?? ''));
+                    }
+
+                    $apptHash = md5(($appt['date'] ?? '').($appt['status'] ?? '').($appt['processing_time'] ?? '').($appt['service_name'] ?? $appt['service'] ?? '').($appt['customer_name'] ?? '').$empKey);
 
                     // Skip unchanged appointments to conserve API quota and eliminate duplicates
                     if (! $isTest && $existingSync && $existingSync->ghl_appointment_id && $existingSync->sync_hash === $apptHash) {
