@@ -220,6 +220,9 @@ class WessSyncService
 
                     if ($isCancelledInWess) {
                         if ($existingSync && $existingSync->status !== 'cancelled') {
+                            // Immediately mark status as cancelled in DB to guard against webhook echoes
+                            $existingSync->update(['status' => 'cancelled']);
+
                             if (! empty($existingSync->ghl_appointment_id)) {
                                 // Reschedule Safeguard:
                                 // If this appointment was rescheduled in GHL, a newer active WESS booking is linked to the same GHL appointment.
@@ -263,15 +266,13 @@ class WessSyncService
                                     ]);
                                 }
                             }
-                            $existingSync->update(['status' => 'cancelled']);
                         } elseif (! $existingSync) {
                             // Layer 2 Recovery: If not in local mapping table, search GHL calendar for this WESS booking
                             $startTime = ! empty($appt['date']) ? Carbon::parse($appt['date'])->toIso8601String() : null;
                             $recoveredCrmId = $startTime ? $this->ghlCalendarService->findExistingCrmEventByWessId($locationId, (string) $apptId, $startTime) : null;
 
                             if ($recoveredCrmId) {
-                                $cancelSuccess = $this->ghlCalendarService->cancelAppointmentInGhl($locationId, $recoveredCrmId);
-                                $cancelledCount++;
+                                // Mark in DB before calling cancel to guard against webhook echoes
                                 SyncedAppointment::updateOrCreate(
                                     [
                                         'location_id' => $locationId,
@@ -284,6 +285,9 @@ class WessSyncService
                                         'last_synced_at' => now(),
                                     ]
                                 );
+
+                                $cancelSuccess = $this->ghlCalendarService->cancelAppointmentInGhl($locationId, $recoveredCrmId);
+                                $cancelledCount++;
 
                                 WebhookLog::create([
                                     'source' => 'wess_sync',
@@ -337,7 +341,15 @@ class WessSyncService
                         $empKey = (string) ($appt['employee_id'] ?? ($appt['staff_id'] ?? ''));
                     }
 
-                    $apptHash = md5(($appt['date'] ?? '').($appt['status'] ?? '').($appt['processing_time'] ?? '').($appt['service_name'] ?? $appt['service'] ?? '').($appt['customer_name'] ?? '').$empKey);
+                    $custKey = '';
+                    if (!empty($appt['customer']) && is_array($appt['customer'])) {
+                        $custKey = ($appt['customer']['code'] ?? '') .
+                                   ($appt['customer']['phone_mobile'] ?? ($appt['customer']['phone'] ?? '')) .
+                                   ($appt['customer']['email'] ?? '') .
+                                   ($appt['customer']['salutation'] ?? '');
+                    }
+
+                    $apptHash = md5(($appt['date'] ?? '').($appt['status'] ?? '').($appt['processing_time'] ?? '').($appt['service_name'] ?? $appt['service'] ?? '').($appt['customer_name'] ?? '').$empKey.$custKey);
 
                     // Skip unchanged appointments to conserve API quota and eliminate duplicates
                     if (! $isTest && $existingSync && $existingSync->ghl_appointment_id && $existingSync->sync_hash === $apptHash) {

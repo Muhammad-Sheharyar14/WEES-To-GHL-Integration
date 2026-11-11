@@ -187,27 +187,29 @@ class GhlWebhookController extends Controller
             }
 
             // Echo Loop Prevention (3-Tier Protection):
-            // When WESS sync pushes an appointment to GHL, GHL triggers AppointmentCreate / AppointmentUpdate.
-            // We prevent feedback loops through 3 layers:
-            // 1. Debounce Cache Lock: 45s TTL set when WESS pushes to GHL.
+            // When WESS sync creates, updates, moves, or cancels an appointment in CRM,
+            // CRM echoes back webhooks. We prevent feedback loops through 3 layers:
+            // 1. Debounce Cache Lock: Checked for ALL webhooks (creates, updates, and cancellations).
             // 2. Metadata Signature: If notes contain 'WESS Booking ID:' or title contains WESS tag.
-            // 3. Database Check: If this GHL appointment is already linked to a WESS booking in synced_appointments.
-            $isCancellation = str_contains($type, 'delete') || str_contains($type, 'cancel') || in_array($status, ['cancelled', 'canceled', 'deleted']);
-            if (!$isCancellation) {
-                // Layer 1: 45s Cache Debounce Lock
-                if ($appointmentId && Cache::has("wess_origin_appt_{$appointmentId}")) {
-                    Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} due to active 45s sync debounce lock.");
-                    $log->update([
-                        'response_status' => 200,
-                        'response_body'   => json_encode([
-                            'status'  => 'skipped',
-                            'message' => 'Loop prevention: Appointment originated from recent WESS sync. No re-sync needed.',
-                        ]),
-                    ]);
-                    return;
-                }
+            // 3. Database Check: If this GHL appointment is already linked or marked cancelled.
 
-                // Layer 2: WESS Metadata Signature Check (in notes or title)
+            // Layer 1: Debounce Cache Lock (Applies unconditionally to ALL webhooks, including cancellations)
+            if ($appointmentId && (Cache::has("wess_origin_appt_{$appointmentId}") || Cache::has("wess_migrating_{$appointmentId}"))) {
+                Log::info("Loop prevention: Skipped appointment webhook {$appointmentId} due to active sync debounce lock.");
+                $log->update([
+                    'response_status' => 200,
+                    'response_body'   => json_encode([
+                        'status'  => 'skipped',
+                        'message' => 'Loop prevention: Appointment originated from recent WESS sync. No re-sync needed.',
+                    ]),
+                ]);
+                return;
+            }
+
+            $isCancellation = str_contains($type, 'delete') || str_contains($type, 'cancel') || in_array($status, ['cancelled', 'canceled', 'deleted']);
+
+            if (!$isCancellation) {
+                // Layer 2: WESS Metadata Signature Check (in notes or title) for non-cancellations
                 if (
                     str_contains($notes, 'WESS Booking ID:') ||
                     str_contains($notes, 'WESS ID:') ||
@@ -229,11 +231,24 @@ class GhlWebhookController extends Controller
             }
 
             // Cancellation / Deletion Event
-            if (str_contains($type, 'delete') || str_contains($type, 'cancel') || in_array($status, ['cancelled', 'canceled', 'deleted'])) {
+            if ($isCancellation) {
                 if ($appointmentId) {
                     $synced = SyncedAppointment::where('location_id', $locationId)
                         ->where('ghl_appointment_id', (string) $appointmentId)
                         ->first();
+
+                    // If appointment is already marked cancelled in database, skip calling WESS
+                    if ($synced && $synced->status === 'cancelled') {
+                        Log::info("Cancellation skipped for appointment {$appointmentId}: already marked as cancelled in database.");
+                        $log->update([
+                            'response_status' => 200,
+                            'response_body'   => json_encode([
+                                'status'  => 'skipped',
+                                'message' => 'Appointment is already cancelled.',
+                            ]),
+                        ]);
+                        return;
+                    }
 
                     $wessApptId = $synced?->wess_appointment_id;
 
@@ -292,41 +307,8 @@ class GhlWebhookController extends Controller
                         }
                     }
 
-                    // Fallback 4: Check WESS candidate appointments around this time by customer phone
-                    if (!$wessApptId && !empty($startTime) && !empty($phone)) {
-                        try {
-                            $parsedStart = Carbon::parse($startTime);
-                            $candidateAppts = $wessClient->getAppointments($branchId, [
-                                'date_from' => $parsedStart->copy()->subHours(2)->format('Y-m-d H:i:s'),
-                                'date_to'   => $parsedStart->copy()->addHours(2)->format('Y-m-d H:i:s'),
-                            ]);
-                            $cleanPhone = WessClient::parsePhoneNumber($phone)['mobile'];
-                            $bestMatch  = null;
-                            $minDiff    = PHP_INT_MAX;
-
-                            foreach ($candidateAppts as $cAppt) {
-                                $cPhone = $cAppt['customer']['phone_mobile'] ?? ($cAppt['phone'] ?? '');
-                                if (!empty($cleanPhone) && str_contains($cPhone, $cleanPhone)) {
-                                    $cDate = !empty($cAppt['date']) ? Carbon::parse($cAppt['date']) : null;
-                                    if ($cDate) {
-                                        $diffMinutes = abs($cDate->diffInMinutes($parsedStart));
-                                        if ($diffMinutes <= 120 && $diffMinutes < $minDiff) {
-                                            $minDiff   = $diffMinutes;
-                                            $bestMatch = $cAppt;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if ($bestMatch) {
-                                $wessApptId = (string) $bestMatch['id'];
-                                $customerId = $bestMatch['customer_id'] ?? ($bestMatch['customer']['id'] ?? null);
-                                Log::info("Cancellation Auto-Recovery: Matched WESS appointment ID {$wessApptId} by phone & closest slot window (diff: {$minDiff} mins).");
-                            }
-                        } catch (\Throwable $searchEx) {
-                            Log::warning("Could not auto-search candidate WESS appointments: " . $searchEx->getMessage());
-                        }
-                    }
+                    // NOTE: Fallback 4 (fuzzy-matching candidate appointments by phone) has been safely removed
+                    // to prevent unintended cancellations of unrelated client appointments in live WESS.
 
                     // Resolve real customer ID for WESS cancellation
                     $customerId = $payload['customerId'] ?? ($payload['customer_id'] ?? null);
@@ -398,6 +380,7 @@ class GhlWebhookController extends Controller
                             ]),
                         ]);
                     }
+                    return;
                 }
                 return;
             }

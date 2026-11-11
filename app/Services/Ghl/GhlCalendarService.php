@@ -4,21 +4,24 @@ namespace App\Services\Ghl;
 
 use App\Models\SyncedAppointment;
 use App\Models\WebhookLog;
+use App\Models\WessConfig;
+use App\Services\Wess\WessClient;
+use Exception;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Exception;
 
 class GhlCalendarService
 {
     protected GhlAuthService $authService;
+
     protected string $baseUrl;
 
     public function __construct(GhlAuthService $authService)
     {
         $this->authService = $authService;
-        $this->baseUrl     = rtrim(config('ghl.base_url', 'https://services.leadconnectorhq.com'), '/');
+        $this->baseUrl = rtrim(config('ghl.base_url', 'https://services.leadconnectorhq.com'), '/');
     }
 
     public function getBaseUrl(): string
@@ -35,20 +38,20 @@ class GhlCalendarService
 
         $client = Http::withHeaders([
             'Authorization' => "Bearer {$token}",
-            'Version'       => '2021-07-28',
-            'Accept'        => 'application/json',
-            'Content-Type'  => 'application/json',
+            'Version' => '2021-07-28',
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
         ])->timeout(15);
 
-        $url = "{$this->baseUrl}/" . ltrim($endpoint, '/');
+        $url = "{$this->baseUrl}/".ltrim($endpoint, '/');
 
         return match (strtoupper($method)) {
-            'GET'    => $client->get($url, $data),
-            'POST'   => $client->post($url, $data),
-            'PUT'    => $client->put($url, $data),
-            'PATCH'  => $client->patch($url, $data),
+            'GET' => $client->get($url, $data),
+            'POST' => $client->post($url, $data),
+            'PUT' => $client->put($url, $data),
+            'PATCH' => $client->patch($url, $data),
             'DELETE' => $client->delete($url, $data),
-            default  => throw new Exception("Unsupported method: {$method}"),
+            default => throw new Exception("Unsupported method: {$method}"),
         };
     }
 
@@ -66,8 +69,8 @@ class GhlCalendarService
                     $token = $this->authService->getValidAccessToken($locationId, $companyId);
                     $res = Http::withHeaders([
                         'Authorization' => "Bearer {$token}",
-                        'Version'       => $ver,
-                        'Accept'        => 'application/json',
+                        'Version' => $ver,
+                        'Accept' => 'application/json',
                     ])->timeout(15)->get("{$this->baseUrl}/calendars/", [
                         'locationId' => $locationId,
                     ]);
@@ -76,62 +79,63 @@ class GhlCalendarService
                         break;
                     }
                 } catch (Exception $tokenEx) {
-                    Log::warning("Token resolution attempt with version {$ver} for location {$locationId}: " . $tokenEx->getMessage());
+                    Log::warning("Token resolution attempt with version {$ver} for location {$locationId}: ".$tokenEx->getMessage());
                 }
             }
 
             if ($res && $res->successful()) {
                 $rawCalendars = $res->json('calendars') ?? $res->json() ?? [];
-                if (!is_array($rawCalendars) && isset($rawCalendars['calendars'])) {
+                if (! is_array($rawCalendars) && isset($rawCalendars['calendars'])) {
                     $rawCalendars = $rawCalendars['calendars'];
                 }
 
                 $calendars = [];
                 if (is_array($rawCalendars)) {
                     foreach ($rawCalendars as $cal) {
-                        if (!is_array($cal) || empty($cal['id'])) {
+                        if (! is_array($cal) || empty($cal['id'])) {
                             continue;
                         }
 
                         // Extract primary user ID or first team member
                         $userId = null;
-                        if (!empty($cal['teamMembers']) && is_array($cal['teamMembers'])) {
+                        if (! empty($cal['teamMembers']) && is_array($cal['teamMembers'])) {
                             foreach ($cal['teamMembers'] as $member) {
-                                if (!empty($member['isPrimary']) && !empty($member['userId'])) {
+                                if (! empty($member['isPrimary']) && ! empty($member['userId'])) {
                                     $userId = $member['userId'];
                                     break;
                                 }
                             }
-                            if (!$userId && !empty($cal['teamMembers'][0]['userId'])) {
+                            if (! $userId && ! empty($cal['teamMembers'][0]['userId'])) {
                                 $userId = $cal['teamMembers'][0]['userId'];
                             }
                         }
-                        if (!$userId && !empty($cal['userId'])) {
+                        if (! $userId && ! empty($cal['userId'])) {
                             $userId = $cal['userId'];
                         }
 
                         $calendars[] = [
-                            'id'           => $cal['id'],
-                            'name'         => $cal['name'] ?? 'Unnamed Calendar',
+                            'id' => $cal['id'],
+                            'name' => $cal['name'] ?? 'Unnamed Calendar',
                             'calendarType' => $cal['calendarType'] ?? 'standard',
-                            'user_id'      => $userId,
-                            'description'  => $cal['description'] ?? '',
+                            'user_id' => $userId,
+                            'description' => $cal['description'] ?? '',
                         ];
                     }
                 }
 
-                Log::info("Successfully fetched " . count($calendars) . " CRM calendars for location {$locationId}");
+                Log::info('Successfully fetched '.count($calendars)." CRM calendars for location {$locationId}");
+
                 return $calendars;
             }
 
             if ($res) {
                 Log::error("Failed to fetch calendars from GHL for location {$locationId}", [
                     'status' => $res->status(),
-                    'body'   => $res->body(),
+                    'body' => $res->body(),
                 ]);
             }
         } catch (Exception $e) {
-            Log::error("Exception in getCalendars for location {$locationId}: " . $e->getMessage());
+            Log::error("Exception in getCalendars for location {$locationId}: ".$e->getMessage());
         }
 
         return [];
@@ -146,47 +150,48 @@ class GhlCalendarService
             $token = $this->authService->getValidAccessToken($locationId, $companyId);
             $res = Http::withHeaders([
                 'Authorization' => "Bearer {$token}",
-                'Version'       => '2021-07-28',
-                'Accept'        => 'application/json',
+                'Version' => '2021-07-28',
+                'Accept' => 'application/json',
             ])->timeout(15)->get("{$this->baseUrl}/users/", [
                 'locationId' => $locationId,
             ]);
 
             if ($res->successful()) {
                 $rawUsers = $res->json('users') ?? $res->json() ?? [];
-                if (!is_array($rawUsers) && isset($rawUsers['users'])) {
+                if (! is_array($rawUsers) && isset($rawUsers['users'])) {
                     $rawUsers = $rawUsers['users'];
                 }
 
                 $users = [];
                 if (is_array($rawUsers)) {
                     foreach ($rawUsers as $u) {
-                        if (!is_array($u) || empty($u['id'])) {
+                        if (! is_array($u) || empty($u['id'])) {
                             continue;
                         }
                         $users[] = [
-                            'id'        => $u['id'],
-                            'name'      => $u['name'] ?? trim(($u['firstName'] ?? '') . ' ' . ($u['lastName'] ?? '')),
+                            'id' => $u['id'],
+                            'name' => $u['name'] ?? trim(($u['firstName'] ?? '').' '.($u['lastName'] ?? '')),
                             'firstName' => $u['firstName'] ?? '',
-                            'lastName'  => $u['lastName'] ?? '',
-                            'email'     => $u['email'] ?? '',
-                            'phone'     => $u['phone'] ?? '',
+                            'lastName' => $u['lastName'] ?? '',
+                            'email' => $u['email'] ?? '',
+                            'phone' => $u['phone'] ?? '',
                         ];
                     }
                 }
 
-                Log::info("Successfully fetched " . count($users) . " CRM users for location {$locationId}");
+                Log::info('Successfully fetched '.count($users)." CRM users for location {$locationId}");
+
                 return $users;
             }
 
             if ($res) {
                 Log::warning("Failed to fetch users from CRM for location {$locationId}", [
                     'status' => $res->status(),
-                    'body'   => $res->body(),
+                    'body' => $res->body(),
                 ]);
             }
         } catch (Exception $e) {
-            Log::error("Exception in getUsers for location {$locationId}: " . $e->getMessage());
+            Log::error("Exception in getUsers for location {$locationId}: ".$e->getMessage());
         }
 
         return [];
@@ -199,97 +204,117 @@ class GhlCalendarService
     public function getTherapistCalendarMap(string $locationId, ?string $companyId = null, bool $forceRefresh = false): array
     {
         $cacheKey = "ghl_therapist_map_{$locationId}";
-        if (!$forceRefresh) {
+        if (! $forceRefresh) {
             $cached = Cache::get($cacheKey);
-            if (is_array($cached) && !empty($cached)) {
+            if (is_array($cached) && ! empty($cached)) {
                 return $cached;
             }
         }
 
-        $users     = $this->getUsers($locationId, $companyId);
+        $users = $this->getUsers($locationId, $companyId);
         $calendars = $this->getCalendars($locationId, $companyId);
 
-        $defaultCalId  = null;
+        $defaultCalId = null;
         $defaultUserId = null;
 
         // Determine default fallback calendar (first calendar or WESS calendar)
         foreach ($calendars as $cal) {
             if (empty($defaultCalId)) {
-                $defaultCalId  = $cal['id'];
+                $defaultCalId = $cal['id'];
                 $defaultUserId = $cal['user_id'] ?? null;
             }
             if (stripos($cal['name'] ?? '', 'WESS') !== false) {
-                $defaultCalId  = $cal['id'];
+                $defaultCalId = $cal['id'];
                 $defaultUserId = $cal['user_id'] ?? $defaultUserId;
                 break;
             }
         }
 
         $map = [
-            'by_code'    => [], // e.g. 'EP01009' => ['calendar_id' => ..., 'user_id' => ...]
-            'by_name'    => [], // e.g. 'aarin' => ['calendar_id' => ..., 'user_id' => ...]
+            'by_code' => [], // e.g. 'EP01009' => ['calendar_id' => ..., 'user_id' => ...]
+            'by_name' => [], // e.g. 'aarin' => ['calendar_id' => ..., 'user_id' => ...]
             'by_user_id' => [], // e.g. 'usr_123' => ['calendar_id' => ..., 'user_id' => ...]
-            'by_cal_id'  => [], // e.g. 'cal_123' => ['calendar_id' => ..., 'user_id' => ...]
-            'users'      => $users,
-            'calendars'  => $calendars,
-            '_default'   => [
+            'by_cal_id' => [], // e.g. 'cal_123' => ['calendar_id' => ..., 'user_id' => ...]
+            'users' => $users,
+            'calendars' => $calendars,
+            '_default' => [
                 'calendar_id' => $defaultCalId,
-                'user_id'     => $defaultUserId,
+                'user_id' => $defaultUserId,
             ],
         ];
 
         // 1. Link each user to their calendar
         foreach ($users as $user) {
-            $uId    = $user['id'];
-            $uName  = $user['name'] ?? '';
+            $uId = $user['id'];
+            $uName = $user['name'] ?? '';
             $uFirst = trim($user['firstName'] ?? '');
-            $uLast  = trim($user['lastName'] ?? '');
+            $uLast = trim($user['lastName'] ?? '');
 
-            // Find matching calendar for this user:
-            // Check A: calendar.user_id === user.id
-            // Check B: calendar name contains user's first name, full name, or last name (code)
+            // Find matching personal calendar for this user:
+            // Match Priority Scoring:
+            // Score 100: Calendar name contains staff employee code & is NOT a service_booking calendar
+            // Score 90:  Calendar name contains staff first/full name & is NOT a service_booking calendar
+            // Score 70:  Calendar name contains staff employee code
+            // Score 60:  Calendar name contains staff name
+            // Score 50:  Calendar user_id === user.id AND is NOT a service_booking calendar
+            // Score 20:  Calendar user_id === user.id (fallback on service/general calendar)
             $matchedCal = null;
-            foreach ($calendars as $cal) {
-                if (!empty($cal['user_id']) && $cal['user_id'] === $uId) {
-                    $matchedCal = $cal;
-                    break;
-                }
-            }
+            $bestScore = 0;
 
-            if (!$matchedCal) {
-                foreach ($calendars as $cal) {
-                    $cName = $cal['name'] ?? '';
-                    if (!empty($uLast) && stripos($cName, $uLast) !== false) {
-                        $matchedCal = $cal;
-                        break;
-                    }
-                    if (!empty($uFirst) && stripos($cName, $uFirst) !== false) {
-                        $matchedCal = $cal;
-                        break;
-                    }
+            foreach ($calendars as $cal) {
+                $cName = $cal['name'] ?? '';
+                $cType = strtolower($cal['calendarType'] ?? '');
+                $cUserId = $cal['user_id'] ?? ($cal['userId'] ?? '');
+                $isService = ($cType === 'service_booking');
+
+                $score = 0;
+
+                $hasCodeMatch = (! empty($uLast) && stripos($cName, $uLast) !== false) ||
+                                (preg_match('/(EP\d+)/i', $uLast, $m) && stripos($cName, $m[1]) !== false) ||
+                                (preg_match('/(EP\d+)/i', $uName, $m) && stripos($cName, $m[1]) !== false);
+                $hasNameMatch = (! empty($uFirst) && stripos($cName, $uFirst) !== false) ||
+                                (! empty($uName) && stripos($cName, $uName) !== false);
+
+                if ($hasCodeMatch && ! $isService) {
+                    $score = 100;
+                } elseif ($hasNameMatch && ! $isService) {
+                    $score = 90;
+                } elseif ($hasCodeMatch) {
+                    $score = 70;
+                } elseif ($hasNameMatch) {
+                    $score = 60;
+                } elseif (! empty($cUserId) && $cUserId === $uId && ! $isService) {
+                    $score = 50;
+                } elseif (! empty($cUserId) && $cUserId === $uId) {
+                    $score = 20;
+                }
+
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $matchedCal = $cal;
                 }
             }
 
             $calId = $matchedCal['id'] ?? $defaultCalId;
             $entry = [
-                'calendar_id'   => $calId,
+                'calendar_id' => $calId,
                 'calendar_name' => $matchedCal['name'] ?? '',
-                'user_id'       => $uId,
-                'user_name'     => $uName,
-                'first_name'    => $uFirst,
-                'last_name'     => $uLast,
+                'user_id' => $uId,
+                'user_name' => $uName,
+                'first_name' => $uFirst,
+                'last_name' => $uLast,
             ];
 
             // Index by User ID
             $map['by_user_id'][$uId] = $entry;
 
             // Index by Calendar ID
-            if (!empty($matchedCal['id'])) {
+            if (! empty($matchedCal['id'])) {
                 $map['by_cal_id'][$matchedCal['id']] = $entry;
             }
 
             // Index by employee code if present in lastName or name (e.g. EP01009)
-            if (!empty($uLast)) {
+            if (! empty($uLast)) {
                 $map['by_code'][strtoupper(trim($uLast))] = $entry;
                 if (preg_match('/(EP\d+)/i', $uLast, $m)) {
                     $map['by_code'][strtoupper($m[1])] = $entry;
@@ -299,19 +324,22 @@ class GhlCalendarService
                 $map['by_code'][strtoupper($m[1])] = $entry;
             }
 
-            // Index by normalized names
-            if (!empty($uFirst)) {
-                $normFirst = strtolower(preg_replace('/[^a-z0-9]/', '', $uFirst));
+            // Index by normalized names (ensure lowercase before stripping non-alphanumeric)
+            if (! empty($uFirst)) {
+                $normFirst = preg_replace('/[^a-z0-9]/', '', strtolower($uFirst));
                 $map['by_name'][$normFirst] = $entry;
+                $map['by_name'][strtolower(trim($uFirst))] = $entry;
             }
-            if (!empty($uName)) {
-                $normFull = strtolower(preg_replace('/[^a-z0-9]/', '', $uName));
+            if (! empty($uName)) {
+                $normFull = preg_replace('/[^a-z0-9]/', '', strtolower($uName));
                 $map['by_name'][$normFull] = $entry;
+                $map['by_name'][strtolower(trim($uName))] = $entry;
             }
         }
 
         // Cache for 15 minutes
         Cache::put($cacheKey, $map, now()->addMinutes(15));
+
         return $map;
     }
 
@@ -319,79 +347,82 @@ class GhlCalendarService
      * Resolve therapist personal calendar and user ID for a WESS appointment
      */
     public function resolveTherapistCalendar(
-        array $therapistMap, 
-        array $wessAppointment, 
-        ?string $fallbackCalendarId = null, 
+        array $therapistMap,
+        array $wessAppointment,
+        ?string $fallbackCalendarId = null,
         ?string $fallbackUserId = null
-    ): array
-    {
-        $defaultCalId  = $fallbackCalendarId ?: ($therapistMap['_default']['calendar_id'] ?? null);
+    ): array {
+        $defaultCalId = $fallbackCalendarId ?: ($therapistMap['_default']['calendar_id'] ?? null);
         $defaultUserId = $fallbackUserId ?: ($therapistMap['_default']['user_id'] ?? null);
 
         $employees = $wessAppointment['employees'] ?? [];
-        if (empty($employees) || !is_array($employees)) {
+        if (empty($employees) || ! is_array($employees)) {
             return [
                 'calendar_id' => $defaultCalId,
-                'user_id'     => $defaultUserId,
-                'matched_by'  => 'default_no_employee',
+                'user_id' => $defaultUserId,
+                'matched_by' => 'default_no_employee',
             ];
         }
 
         $emp = $employees[0] ?? [];
-        $empCode  = strtoupper(trim($emp['code'] ?? ($emp['employee_code'] ?? '')));
+        $empCode = strtoupper(trim($emp['code'] ?? ($emp['employee_code'] ?? '')));
         $empFirst = trim($emp['first_name'] ?? '');
-        $empLast  = trim($emp['last_name'] ?? '');
+        $empLast = trim($emp['last_name'] ?? '');
 
         // 1. Try matching by employee code (e.g. EP01009)
-        if (!empty($empCode) && isset($therapistMap['by_code'][$empCode])) {
+        if (! empty($empCode) && isset($therapistMap['by_code'][$empCode])) {
             $m = $therapistMap['by_code'][$empCode];
+
             return [
                 'calendar_id' => $m['calendar_id'] ?: $defaultCalId,
-                'user_id'     => $m['user_id'] ?: $defaultUserId,
-                'matched_by'  => "code:{$empCode}",
+                'user_id' => $m['user_id'] ?: $defaultUserId,
+                'matched_by' => "code:{$empCode}",
             ];
         }
 
         // Check if last_name has code (e.g. EP01009)
-        if (!empty($empLast) && preg_match('/(EP\d+)/i', $empLast, $codeMatch)) {
+        if (! empty($empLast) && preg_match('/(EP\d+)/i', $empLast, $codeMatch)) {
             $code = strtoupper($codeMatch[1]);
             if (isset($therapistMap['by_code'][$code])) {
                 $m = $therapistMap['by_code'][$code];
+
                 return [
                     'calendar_id' => $m['calendar_id'] ?: $defaultCalId,
-                    'user_id'     => $m['user_id'] ?: $defaultUserId,
-                    'matched_by'  => "last_name_code:{$code}",
+                    'user_id' => $m['user_id'] ?: $defaultUserId,
+                    'matched_by' => "last_name_code:{$code}",
                 ];
             }
         }
 
         // 2. Try matching by normalized full name (e.g. "Xiao Yu" => "xiaoyu")
-        $fullNameNorm = strtolower(preg_replace('/[^a-z0-9]/', '', "{$empFirst}{$empLast}"));
-        if (!empty($fullNameNorm) && isset($therapistMap['by_name'][$fullNameNorm])) {
+        $fullNameNorm = preg_replace('/[^a-z0-9]/', '', strtolower("{$empFirst}{$empLast}"));
+        if (! empty($fullNameNorm) && isset($therapistMap['by_name'][$fullNameNorm])) {
             $m = $therapistMap['by_name'][$fullNameNorm];
+
             return [
                 'calendar_id' => $m['calendar_id'] ?: $defaultCalId,
-                'user_id'     => $m['user_id'] ?: $defaultUserId,
-                'matched_by'  => "full_name:{$fullNameNorm}",
+                'user_id' => $m['user_id'] ?: $defaultUserId,
+                'matched_by' => "full_name:{$fullNameNorm}",
             ];
         }
 
         // 3. Try matching by normalized first name (e.g. "Aarin" => "aarin", "Cherry" => "cherry")
-        $firstNameNorm = strtolower(preg_replace('/[^a-z0-9]/', '', $empFirst));
-        if (!empty($firstNameNorm) && isset($therapistMap['by_name'][$firstNameNorm])) {
+        $firstNameNorm = preg_replace('/[^a-z0-9]/', '', strtolower($empFirst));
+        if (! empty($firstNameNorm) && isset($therapistMap['by_name'][$firstNameNorm])) {
             $m = $therapistMap['by_name'][$firstNameNorm];
+
             return [
                 'calendar_id' => $m['calendar_id'] ?: $defaultCalId,
-                'user_id'     => $m['user_id'] ?: $defaultUserId,
-                'matched_by'  => "first_name:{$firstNameNorm}",
+                'user_id' => $m['user_id'] ?: $defaultUserId,
+                'matched_by' => "first_name:{$firstNameNorm}",
             ];
         }
 
         // 4. Fallback to default calendar
         return [
             'calendar_id' => $defaultCalId,
-            'user_id'     => $defaultUserId,
-            'matched_by'  => 'fallback_default',
+            'user_id' => $defaultUserId,
+            'matched_by' => 'fallback_default',
         ];
     }
 
@@ -411,17 +442,17 @@ class GhlCalendarService
 
             // Create new WESS calendar if not found
             $createRes = $this->ghlRequest('POST', 'calendars', $locationId, [
-                'locationId'  => $locationId,
-                'name'        => 'WESS Salon & Spa Calendar',
+                'locationId' => $locationId,
+                'name' => 'WESS Salon & Spa Calendar',
                 'description' => 'Synchronized with WESS management system by Ample Life',
-                'isActive'    => true,
+                'isActive' => true,
             ]);
 
             if (in_array($createRes->status(), [200, 201])) {
                 return $createRes->json('calendar') ?? $createRes->json();
             }
         } catch (Exception $e) {
-            Log::warning("Could not auto-resolve WESS calendar in GHL for location {$locationId}: " . $e->getMessage());
+            Log::warning("Could not auto-resolve WESS calendar in GHL for location {$locationId}: ".$e->getMessage());
         }
 
         return ['id' => 'default_wess_calendar'];
@@ -432,18 +463,17 @@ class GhlCalendarService
      * Implements privacy masking (Excel Item A.4: MC customers only see slot blocks, no private details)
      */
     public function syncAppointmentToGhl(
-        string $locationId, 
-        array $wessAppointment, 
+        string $locationId,
+        array $wessAppointment,
         bool $maskPrivateDetails = true,
         ?string $customCalendarId = null,
         ?string $customUserId = null
-    ): array
-    {
+    ): array {
         $calendarId = $customCalendarId;
-        $userId     = $customUserId;
+        $userId = $customUserId;
 
         if (empty($calendarId) || empty($userId)) {
-            $config = \App\Models\WessConfig::where('location_id', $locationId)->first();
+            $config = WessConfig::where('location_id', $locationId)->first();
             if (empty($calendarId)) {
                 $calendarId = $config?->calendar_id;
             }
@@ -455,7 +485,7 @@ class GhlCalendarService
         if (empty($calendarId)) {
             $calendar = $this->getOrCreateWessCalendar($locationId);
             $calendarId = $calendar['id'] ?? 'default_wess_calendar';
-            if (empty($userId) && !empty($calendar['user_id'])) {
+            if (empty($userId) && ! empty($calendar['user_id'])) {
                 $userId = $calendar['user_id'];
             }
         }
@@ -465,39 +495,52 @@ class GhlCalendarService
         $dateRaw = $wessAppointment['date'] ?? $wessAppointment['start_time'] ?? $wessAppointment['datetime'] ?? null;
         if ($dateRaw) {
             $parsedStart = Carbon::parse($dateRaw);
-            $startTime   = $parsedStart->toIso8601String();
+            $startTime = $parsedStart->toIso8601String();
             $durationMinutes = (int) ($wessAppointment['processing_time'] ?? 30);
-            $endTime = !empty($wessAppointment['end_time']) 
-                ? Carbon::parse($wessAppointment['end_time'])->toIso8601String() 
+            $endTime = ! empty($wessAppointment['end_time'])
+                ? Carbon::parse($wessAppointment['end_time'])->toIso8601String()
                 : $parsedStart->copy()->addMinutes($durationMinutes)->toIso8601String();
         } else {
             $startTime = now()->toIso8601String();
-            $endTime   = now()->addHour()->toIso8601String();
+            $endTime = now()->addHour()->toIso8601String();
         }
 
         $serviceName = $wessAppointment['service_name'] ?? $wessAppointment['service'] ?? 'Salon & Spa Therapy';
 
         // Resolve customer / contact details from WESS appointment
-        $customer     = $wessAppointment['customer'] ?? null;
-        $customerName = $wessAppointment['customer_name'] ?? ($customer ? trim(($customer['first_name'] ?? '') . ' ' . ($customer['last_name'] ?? '')) : '');
+        $customer = $wessAppointment['customer'] ?? null;
+        $customerName = $wessAppointment['customer_name'] ?? ($customer ? trim(($customer['first_name'] ?? '').' '.($customer['last_name'] ?? '')) : '');
 
         // Customer-centric appointment title (e.g. "John's Appointment" or "Test SandboxClient's Appointment")
-        if (!empty($customerName)) {
+        if (! empty($customerName)) {
             $possessive = str_ends_with(strtolower($customerName), 's') ? "{$customerName}' Appointment" : "{$customerName}'s Appointment";
             $title = $possessive;
         } else {
-            $title = !empty($serviceName) ? "{$serviceName} Appointment" : "Client's Appointment";
+            $title = ! empty($serviceName) ? "{$serviceName} Appointment" : "Client's Appointment";
         }
-        $phone        = $wessAppointment['phone'] ?? ($customer['phone_mobile'] ?? ($customer['phone'] ?? ''));
-        $email        = $wessAppointment['email'] ?? ($customer['customer_detail']['email'] ?? ($customer['email'] ?? ''));
-        $contactId    = $wessAppointment['contact_id'] ?? ($wessAppointment['contactId'] ?? null);
+        $phone = $wessAppointment['phone'] ?? ($customer['phone_mobile'] ?? ($customer['phone'] ?? ''));
+        $email = $wessAppointment['email'] ?? ($customer['customer_detail']['email'] ?? ($customer['email'] ?? ''));
+        $contactId = $wessAppointment['contact_id'] ?? ($wessAppointment['contactId'] ?? null);
 
-        if (empty($contactId) && (!empty($phone) || !empty($email) || !empty($customerName))) {
+        if (empty($contactId) && (! empty($phone) || ! empty($email) || ! empty($customerName))) {
             try {
-                $contactId = $this->getOrCreateContact($locationId, $customerName, $phone, $email);
+                $contactId = $this->getOrCreateContact($locationId, $customerName, $phone, $email, $customer ?: []);
             } catch (Exception $e) {
-                Log::warning("Could not auto-resolve contact for appointment: " . $e->getMessage());
+                Log::warning('Could not auto-resolve contact for appointment: '.$e->getMessage());
             }
+        }
+
+        // Full Customer Profile Sync to MiniChat (GHL):
+        // Automatically syncs First & Last Name, Phone, Email, WESS Code, Salutation, Gender, Birthday Month
+        if (! empty($contactId) && (! empty($customer) || ! empty($customerName))) {
+            $this->syncCustomerProfileToGhl(
+                $locationId,
+                $contactId,
+                $customer ?: [],
+                $customerName,
+                $phone,
+                $email
+            );
         }
 
         // Dynamic appointment status mapping (WESS -> CRM)
@@ -505,26 +548,26 @@ class GhlCalendarService
         $rawStatus = strtolower(trim($wessAppointment['status'] ?? 'open'));
         $appointmentStatus = match ($rawStatus) {
             'request', 'open', 'confirmed' => 'confirmed',
-            'cancelled', 'deleted'         => 'cancelled',
-            'completed', 'done'            => 'completed',
-            'arrived', 'check-in'          => 'showed',
-            'no show', 'no-show'           => 'noshow',
-            default                        => 'confirmed',
+            'cancelled', 'deleted' => 'cancelled',
+            'completed', 'done' => 'completed',
+            'arrived', 'check-in' => 'showed',
+            'no show', 'no-show' => 'noshow',
+            default => 'confirmed',
         };
 
         $payload = [
-            'calendarId'               => $calendarId,
-            'locationId'               => $locationId,
-            'title'                    => $title,
-            'startTime'                => $startTime,
-            'endTime'                  => $endTime,
-            'appointmentStatus'        => $appointmentStatus,
-            'notes'                    => "WESS Booking ID: " . ($wessAppointment['id'] ?? 'N/A'),
+            'calendarId' => $calendarId,
+            'locationId' => $locationId,
+            'title' => $title,
+            'startTime' => $startTime,
+            'endTime' => $endTime,
+            'appointmentStatus' => $appointmentStatus,
+            'notes' => 'WESS Booking ID: '.($wessAppointment['id'] ?? 'N/A'),
             'ignoreFreeSlotValidation' => true,
-            'toNotify'                 => false,
+            'toNotify' => false,
         ];
 
-        if (!empty($contactId)) {
+        if (! empty($contactId)) {
             $payload['contactId'] = $contactId;
         }
 
@@ -532,26 +575,26 @@ class GhlCalendarService
         $assignedUser = $userId ?: ($wessAppointment['staff_id'] ?? null);
 
         // If assignedUser is not set, auto-resolve staff directly from the calendar's definition
-        if (empty($assignedUser) && !empty($calendarId)) {
+        if (empty($assignedUser) && ! empty($calendarId)) {
             try {
                 $allCals = $this->getCalendars($locationId);
                 foreach ($allCals as $c) {
-                    if (($c['id'] ?? '') === $calendarId && !empty($c['user_id'])) {
+                    if (($c['id'] ?? '') === $calendarId && ! empty($c['user_id'])) {
                         $assignedUser = $c['user_id'];
                         break;
                     }
                 }
             } catch (\Throwable $e) {
-                Log::debug("Could not resolve calendar staff user_id: " . $e->getMessage());
+                Log::debug('Could not resolve calendar staff user_id: '.$e->getMessage());
             }
         }
 
-        if (!empty($assignedUser)) {
+        if (! empty($assignedUser)) {
             $payload['assignedUserId'] = $assignedUser;
         }
 
         // Check if this appointment was previously synced to GHL via synced_appointments DB table
-        $wessApptId     = !empty($wessAppointment['id']) ? (string) $wessAppointment['id'] : null;
+        $wessApptId = ! empty($wessAppointment['id']) ? (string) $wessAppointment['id'] : null;
         $existingRecord = null;
         if ($wessApptId) {
             $existingRecord = SyncedAppointment::where('location_id', $locationId)
@@ -561,14 +604,14 @@ class GhlCalendarService
 
         $existingGhlId = $existingRecord?->ghl_appointment_id;
         $existingCalId = $existingRecord?->calendar_id;
-        $isUpdate      = !empty($existingGhlId);
+        $isUpdate = ! empty($existingGhlId);
 
         // Layer 2 Real-Time Duplicate Check: If not in synced_appointments, check if CRM already has this event
-        if (!$isUpdate && $wessApptId) {
+        if (! $isUpdate && $wessApptId) {
             $existingCrmId = $this->findExistingCrmEventByWessId($locationId, $wessApptId, $startTime, $calendarId);
             if ($existingCrmId) {
                 $existingGhlId = $existingCrmId;
-                $isUpdate      = true;
+                $isUpdate = true;
                 Log::info("Layer 2: Detected existing CRM appointment {$existingGhlId} for WESS #{$wessApptId}. Updating via PUT to prevent duplicate.");
             }
         }
@@ -576,113 +619,160 @@ class GhlCalendarService
         // Calendar Reassignment: If therapist/calendar changed in WESS,
         // GHL API does not allow moving calendarId on an existing appointment via PUT.
         // We cancel the old event on the prior calendar, then create fresh on the new therapist calendar.
-        $calendarChanged = $isUpdate && !empty($existingCalId) && !empty($calendarId) && ($existingCalId !== $calendarId);
+        $calendarChanged = $isUpdate && ! empty($existingCalId) && ! empty($calendarId) && ($existingCalId !== $calendarId);
         if ($calendarChanged) {
             Log::info("Appointment WESS #{$wessApptId} moved from calendar {$existingCalId} to {$calendarId}. Cancelling old appointment {$existingGhlId} and creating on new calendar.");
+            // Debounce lock the old GHL appointment for 10 minutes so cancellation webhooks are ignored
+            Cache::put("wess_migrating_{$existingGhlId}", true, now()->addMinutes(10));
+            Cache::put("wess_origin_appt_{$existingGhlId}", true, now()->addMinutes(10));
+
+            // Disassociate from existingRecord so incoming webhooks cannot link to WESS appointment
+            if ($existingRecord) {
+                $existingRecord->update(['ghl_appointment_id' => null]);
+            }
+
             try {
                 $this->cancelAppointmentInGhl($locationId, $existingGhlId);
             } catch (\Throwable $cancelEx) {
-                Log::warning("Could not cancel old calendar appointment {$existingGhlId}: " . $cancelEx->getMessage());
+                Log::warning("Could not cancel old calendar appointment {$existingGhlId}: ".$cancelEx->getMessage());
             }
-            $isUpdate      = false;
+            $isUpdate = false;
             $existingGhlId = null;
         }
 
+        $isBlockSlot = empty($contactId);
+
         try {
-            $res      = null;
-            $endpoint = 'calendars/events/appointments';
-            $method   = 'POST';
+            $res = null;
 
-            // Attempt 1: If existing in GHL, update via PUT to prevent duplication; otherwise create via POST
-            if ($isUpdate) {
-                $endpoint = "calendars/events/appointments/{$existingGhlId}";
-                $method   = 'PUT';
-                $res      = $this->ghlRequest('PUT', $endpoint, $locationId, $payload);
-
-                // If GHL returned 404 or 400 (event id is invalid/deleted in GHL), fall back to re-creating via POST
-                if ($res->status() === 404 || ($res->status() === 400 && str_contains(strtolower($res->body()), 'invalid'))) {
-                    Log::info("Existing GHL appointment {$existingGhlId} not found or invalid in GHL ({$res->status()}). Re-creating via POST.");
-                    $endpoint = 'calendars/events/appointments';
-                    $method   = 'POST';
-                    $res      = !empty($contactId) ? $this->ghlRequest('POST', $endpoint, $locationId, $payload) : null;
-                }
-            } else {
-                if (!empty($contactId)) {
-                    $res = $this->ghlRequest('POST', $endpoint, $locationId, $payload);
-                }
-            }
-
-            // Attempt 2: If appointment endpoint returned 422 or contactId is missing,
-            // fall back to block-slots (Excel Item A.4: MC slot block without requiring contact)
-            if (!$res || $res->status() === 422) {
-                Log::info("Falling back to calendars/events/block-slots for location {$locationId}");
-
-                // GHL Official Documentation Rule (https://marketplace.gohighlevel.com/docs/ghl/calendars/create-block-slot):
-                // "Either calendarId or assignedUserId can be set, not both."
-                // For staff/personal calendars, assignedUserId is used to block the user.
-                // For general/unassigned event calendars, calendarId is used.
+            if ($isBlockSlot) {
+                // When no customer contact is present in WESS, this is an open or blocked slot.
+                // GHL requires contactId for appointments endpoint, so route directly to block-slots
+                // to permanently prevent HTTP 400 (Appointment ContactId must be provided) errors.
                 $baseBlockPayload = [
                     'locationId' => $locationId,
-                    'title'      => $title,
-                    'startTime'  => $startTime,
-                    'endTime'    => $endTime,
+                    'title' => $title,
+                    'startTime' => $startTime,
+                    'endTime' => $endTime,
                 ];
 
                 $blockPayload = $baseBlockPayload;
-                if (!empty($assignedUser)) {
+                if (! empty($assignedUser)) {
                     $blockPayload['assignedUserId'] = $assignedUser;
-                } elseif (!empty($calendarId)) {
+                } elseif (! empty($calendarId)) {
                     $blockPayload['calendarId'] = $calendarId;
                 }
 
-                if ($isUpdate && $method === 'PUT') {
+                if ($isUpdate) {
                     $endpoint = "calendars/events/block-slots/{$existingGhlId}";
-                    $res      = $this->ghlRequest('PUT', $endpoint, $locationId, $blockPayload);
+                    $method = 'PUT';
+                    $res = $this->ghlRequest('PUT', $endpoint, $locationId, $blockPayload);
                     if ($res->status() === 404) {
                         $endpoint = 'calendars/events/block-slots';
-                        $method   = 'POST';
-                        $res      = $this->ghlRequest('POST', $endpoint, $locationId, $blockPayload);
+                        $method = 'POST';
+                        $res = $this->ghlRequest('POST', $endpoint, $locationId, $blockPayload);
                     }
                 } else {
                     $endpoint = 'calendars/events/block-slots';
-                    $method   = 'POST';
-                    $res      = $this->ghlRequest('POST', $endpoint, $locationId, $blockPayload);
-                }
-
-                // Resilient Fallback: If CRM returned 400 Bad Request, try alternating between assignedUserId and calendarId
-                if ($res && $res->status() === 400) {
-                    $alternatePayload = $baseBlockPayload;
-                    if (isset($blockPayload['assignedUserId']) && !empty($calendarId)) {
-                        $alternatePayload['calendarId'] = $calendarId;
-                        Log::info("Retrying block-slots with alternate parameter 'calendarId': {$calendarId}");
-                        $altRes = $this->ghlRequest($method, $endpoint, $locationId, $alternatePayload);
-                        if ($altRes->successful()) {
-                            $res          = $altRes;
-                            $blockPayload = $alternatePayload;
-                        }
-                    } elseif (isset($blockPayload['calendarId']) && !empty($assignedUser)) {
-                        $alternatePayload['assignedUserId'] = $assignedUser;
-                        Log::info("Retrying block-slots with alternate parameter 'assignedUserId': {$assignedUser}");
-                        $altRes = $this->ghlRequest($method, $endpoint, $locationId, $alternatePayload);
-                        if ($altRes->successful()) {
-                            $res          = $altRes;
-                            $blockPayload = $alternatePayload;
-                        }
-                    }
+                    $method = 'POST';
+                    $res = $this->ghlRequest('POST', $endpoint, $locationId, $blockPayload);
                 }
 
                 $payload = $blockPayload;
+            } else {
+                $endpoint = 'calendars/events/appointments';
+                $method = 'POST';
+
+                // Attempt 1: If existing in GHL, update via PUT to prevent duplication; otherwise create via POST
+                if ($isUpdate) {
+                    $endpoint = "calendars/events/appointments/{$existingGhlId}";
+                    $method = 'PUT';
+                    $res = $this->ghlRequest('PUT', $endpoint, $locationId, $payload);
+
+                    // If GHL returned 404 or 400 (event id is invalid/deleted in GHL), fall back to re-creating via POST
+                    if ($res->status() === 404 || ($res->status() === 400 && str_contains(strtolower($res->body()), 'invalid'))) {
+                        Log::info("Existing GHL appointment {$existingGhlId} not found or invalid in GHL ({$res->status()}). Re-creating via POST.");
+                        $endpoint = 'calendars/events/appointments';
+                        $method = 'POST';
+                        $res = ! empty($contactId) ? $this->ghlRequest('POST', $endpoint, $locationId, $payload) : null;
+                    }
+                } else {
+                    if (! empty($contactId)) {
+                        $res = $this->ghlRequest('POST', $endpoint, $locationId, $payload);
+                    }
+                }
+
+                // Fallback to block-slots if appointment endpoint returned 422 or 400 (contactId error)
+                if (! $res || $res->status() === 422 || ($res->status() === 400 && str_contains(strtolower($res->body()), 'contact'))) {
+                    Log::info("Falling back to calendars/events/block-slots for location {$locationId}");
+
+                    $baseBlockPayload = [
+                        'locationId' => $locationId,
+                        'title' => $title,
+                        'startTime' => $startTime,
+                        'endTime' => $endTime,
+                    ];
+
+                    $blockPayload = $baseBlockPayload;
+                    if (! empty($assignedUser)) {
+                        $blockPayload['assignedUserId'] = $assignedUser;
+                    } elseif (! empty($calendarId)) {
+                        $blockPayload['calendarId'] = $calendarId;
+                    }
+
+                    if ($isUpdate && $method === 'PUT') {
+                        $endpoint = "calendars/events/block-slots/{$existingGhlId}";
+                        $res = $this->ghlRequest('PUT', $endpoint, $locationId, $blockPayload);
+                        if ($res->status() === 404) {
+                            $endpoint = 'calendars/events/block-slots';
+                            $method = 'POST';
+                            $res = $this->ghlRequest('POST', $endpoint, $locationId, $blockPayload);
+                        }
+                    } else {
+                        $endpoint = 'calendars/events/block-slots';
+                        $method = 'POST';
+                        $res = $this->ghlRequest('POST', $endpoint, $locationId, $blockPayload);
+                    }
+                    $payload = $blockPayload;
+                }
+            }
+
+            // Resilient Fallback: If CRM returned 400 Bad Request on block-slots, try alternating between assignedUserId and calendarId
+            if (str_contains($endpoint, 'block-slots') && $res && $res->status() === 400) {
+                $alternatePayload = [
+                    'locationId' => $locationId,
+                    'title' => $title,
+                    'startTime' => $startTime,
+                    'endTime' => $endTime,
+                ];
+                if (isset($payload['assignedUserId']) && ! empty($calendarId)) {
+                    $alternatePayload['calendarId'] = $calendarId;
+                    Log::info("Retrying block-slots with alternate parameter 'calendarId': {$calendarId}");
+                    $altRes = $this->ghlRequest($method, $endpoint, $locationId, $alternatePayload);
+                    if ($altRes->successful()) {
+                        $res = $altRes;
+                        $payload = $alternatePayload;
+                    }
+                } elseif (isset($payload['calendarId']) && ! empty($assignedUser)) {
+                    $alternatePayload['assignedUserId'] = $assignedUser;
+                    Log::info("Retrying block-slots with alternate parameter 'assignedUserId': {$assignedUser}");
+                    $altRes = $this->ghlRequest($method, $endpoint, $locationId, $alternatePayload);
+                    if ($altRes->successful()) {
+                        $res = $altRes;
+                        $payload = $alternatePayload;
+                    }
+                }
             }
 
             $statusCode = $res->status();
-            $resData    = $res->json() ?? [];
+            $resData = $res->json() ?? [];
 
             // Extract resolved GHL appointment ID
             $savedGhlId = $resData['id'] ?? $resData['appointment']['id'] ?? $resData['event']['id'] ?? $existingGhlId ?? null;
 
-            // Echo Loop Prevention: Tag created/updated GHL appointment ID in cache with 45s debounce window
+            // Echo Loop Prevention: Tag created/updated GHL appointment ID in cache with 120s debounce window
             if ($savedGhlId) {
-                Cache::put("wess_origin_appt_{$savedGhlId}", true, now()->addSeconds(45));
+                Cache::put("wess_origin_appt_{$savedGhlId}", true, now()->addSeconds(120));
             }
 
             $eventType = str_contains($endpoint, 'block-slots')
@@ -690,22 +780,22 @@ class GhlCalendarService
                 : ($method === 'PUT' ? 'GhlCalendarEventUpdated' : 'GhlCalendarEventCreated');
 
             $logResponseBody = [
-                'ghl_response'         => $resData,
+                'ghl_response' => $resData,
                 'wess_raw_appointment' => $wessAppointment,
             ];
 
             WebhookLog::create([
-                'source'          => 'wess_sync',
-                'location_id'     => $locationId,
-                'event_type'      => $eventType,
-                'endpoint'        => "{$this->baseUrl}/{$endpoint}",
-                'method'          => $method,
-                'payload'         => [
-                    'crm_payload'          => $payload,
+                'source' => 'wess_sync',
+                'location_id' => $locationId,
+                'event_type' => $eventType,
+                'endpoint' => "{$this->baseUrl}/{$endpoint}",
+                'method' => $method,
+                'payload' => [
+                    'crm_payload' => $payload,
                     'wess_raw_appointment' => $wessAppointment,
                 ],
                 'response_status' => $statusCode,
-                'response_body'   => json_encode($logResponseBody),
+                'response_body' => json_encode($logResponseBody),
             ]);
 
             if ($res->failed()) {
@@ -719,39 +809,39 @@ class GhlCalendarService
             // Persist to synced_appointments DB table to permanently track and prevent duplicate bookings
             if ($wessApptId && $savedGhlId) {
                 $empKey = '';
-                if (!empty($wessAppointment['employees']) && is_array($wessAppointment['employees'])) {
+                if (! empty($wessAppointment['employees']) && is_array($wessAppointment['employees'])) {
                     foreach ($wessAppointment['employees'] as $emp) {
-                        $empKey .= ($emp['id'] ?? '') . ($emp['first_name'] ?? '') . ($emp['code'] ?? '');
+                        $empKey .= ($emp['id'] ?? '').($emp['first_name'] ?? '').($emp['code'] ?? '');
                     }
                 } else {
                     $empKey = (string) ($wessAppointment['employee_id'] ?? ($wessAppointment['staff_id'] ?? ''));
                 }
 
-                $syncHash = md5(($wessAppointment['date'] ?? '') . ($wessAppointment['status'] ?? '') . ($wessAppointment['processing_time'] ?? '') . ($wessAppointment['service_name'] ?? $wessAppointment['service'] ?? '') . ($wessAppointment['customer_name'] ?? '') . $empKey);
+                $syncHash = md5(($wessAppointment['date'] ?? '').($wessAppointment['status'] ?? '').($wessAppointment['processing_time'] ?? '').($wessAppointment['service_name'] ?? $wessAppointment['service'] ?? '').($wessAppointment['customer_name'] ?? '').$empKey);
 
                 SyncedAppointment::updateOrCreate(
                     [
-                        'location_id'         => $locationId,
+                        'location_id' => $locationId,
                         'wess_appointment_id' => $wessApptId,
                     ],
                     [
                         'ghl_appointment_id' => (string) $savedGhlId,
-                        'ghl_contact_id'     => $contactId ? (string) $contactId : null,
-                        'calendar_id'        => (string) $calendarId,
-                        'assigned_user_id'   => $assignedUser ? (string) $assignedUser : null,
-                        'title'              => $title,
-                        'status'             => (string) ($wessAppointment['status'] ?? 'confirmed'),
-                        'start_time'         => $startTime,
-                        'end_time'           => $endTime,
-                        'sync_hash'          => $syncHash,
-                        'last_synced_at'     => now(),
+                        'ghl_contact_id' => $contactId ? (string) $contactId : null,
+                        'calendar_id' => (string) $calendarId,
+                        'assigned_user_id' => $assignedUser ? (string) $assignedUser : null,
+                        'title' => $title,
+                        'status' => (string) ($wessAppointment['status'] ?? 'confirmed'),
+                        'start_time' => $startTime,
+                        'end_time' => $endTime,
+                        'sync_hash' => $syncHash,
+                        'last_synced_at' => now(),
                     ]
                 );
             }
 
             return $resData ?: ['status' => $statusCode];
         } catch (Exception $e) {
-            Log::error("Failed to sync appointment to GHL calendar for location {$locationId}: " . $e->getMessage());
+            Log::error("Failed to sync appointment to GHL calendar for location {$locationId}: ".$e->getMessage());
             throw $e;
         }
     }
@@ -759,26 +849,33 @@ class GhlCalendarService
     /**
      * Get or create GHL Contact for appointment booking
      */
-    public function getOrCreateContact(string $locationId, string $name, ?string $phone = null, ?string $email = null): ?string
+    public function getOrCreateContact(string $locationId, string $name, ?string $phone = null, ?string $email = null, array $customerData = []): ?string
     {
-        $cacheKey = "ghl_appt_contact_" . md5("{$locationId}_{$phone}_{$email}_{$name}");
+        $cacheKey = 'ghl_appt_contact_'.md5("{$locationId}_{$phone}_{$email}_{$name}");
         $cachedId = Cache::get($cacheKey);
         if ($cachedId) {
             return $cachedId;
         }
 
-        $parts = explode(' ', trim($name), 2);
+        $firstName = $customerData['first_name'] ?? null;
+        $lastName = $customerData['last_name'] ?? null;
+        if (empty($firstName) && empty($lastName)) {
+            $parts = explode(' ', trim($name), 2);
+            $firstName = $parts[0] ?: 'WESS';
+            $lastName = $parts[1] ?? 'Client';
+        }
+
         $payload = [
             'locationId' => $locationId,
-            'firstName'  => $parts[0] ?: 'WESS',
-            'lastName'   => $parts[1] ?? 'Client',
-            'name'       => $name ?: 'WESS Client',
-            'tags'       => ['WESS'],
+            'firstName' => $firstName ?: 'WESS',
+            'lastName' => $lastName ?: 'Client',
+            'name' => $name ?: trim("{$firstName} {$lastName}"),
+            // DO NOT include 'tags' in contacts/upsert! In GHL API, passing tags in upsert replaces all existing tags.
         ];
-        if (!empty($phone)) {
+        if (! empty($phone)) {
             $payload['phone'] = $phone;
         }
-        if (!empty($email)) {
+        if (! empty($email)) {
             $payload['email'] = $email;
         }
 
@@ -788,11 +885,14 @@ class GhlCalendarService
                 $contactId = $res->json('contact.id') ?? $res->json('id');
                 if ($contactId) {
                     Cache::put($cacheKey, $contactId, now()->addDay());
+                    // Additively attach WESS tag without erasing existing customer tags
+                    $this->addContactTags($locationId, $contactId, ['WESS']);
+
                     return $contactId;
                 }
             }
         } catch (Exception $e) {
-            Log::warning("Contact upsert failed for {$name}: " . $e->getMessage());
+            Log::warning("Contact upsert failed for {$name}: ".$e->getMessage());
         }
 
         return null;
@@ -805,8 +905,8 @@ class GhlCalendarService
     public function cancelAppointmentInGhl(string $locationId, string $ghlAppointmentId): bool
     {
         try {
-            // Echo Loop Prevention: Tag cancelled CRM appointment in cache for 45s
-            Cache::put("wess_origin_appt_{$ghlAppointmentId}", true, now()->addSeconds(45));
+            // Echo Loop Prevention: Tag cancelled CRM appointment in cache for 120s
+            Cache::put("wess_origin_appt_{$ghlAppointmentId}", true, now()->addSeconds(120));
 
             // 1. Update appointment status to 'cancelled' (preserves history in CRM calendar)
             $putRes = $this->ghlRequest('PUT', "calendars/events/appointments/{$ghlAppointmentId}", $locationId, [
@@ -814,6 +914,7 @@ class GhlCalendarService
             ]);
             if ($putRes->successful() || $putRes->status() === 404) {
                 Log::info("Successfully updated CRM appointment {$ghlAppointmentId} status to 'cancelled'.");
+
                 return true;
             }
 
@@ -821,6 +922,7 @@ class GhlCalendarService
             $blockDel = $this->ghlRequest('DELETE', "calendars/events/block-slots/{$ghlAppointmentId}", $locationId);
             if ($blockDel->successful() || $blockDel->status() === 404) {
                 Log::info("Successfully deleted CRM block-slot {$ghlAppointmentId} after WESS cancellation.");
+
                 return true;
             }
 
@@ -828,12 +930,14 @@ class GhlCalendarService
             $delRes = $this->ghlRequest('DELETE', "calendars/events/appointments/{$ghlAppointmentId}", $locationId);
             if ($delRes->successful() || $delRes->status() === 404) {
                 Log::info("Successfully deleted CRM appointment {$ghlAppointmentId} after WESS cancellation fallback.");
+
                 return true;
             }
 
             return false;
         } catch (\Throwable $e) {
-            Log::warning("Could not cancel CRM appointment {$ghlAppointmentId}: " . $e->getMessage());
+            Log::warning("Could not cancel CRM appointment {$ghlAppointmentId}: ".$e->getMessage());
+
             return false;
         }
     }
@@ -847,9 +951,11 @@ class GhlCalendarService
             $res = $this->ghlRequest('POST', "contacts/{$contactId}/tags", $locationId, [
                 'tags' => $tags,
             ]);
+
             return in_array($res->status(), [200, 201]);
         } catch (Exception $e) {
-            Log::warning("Failed to add tags to GHL contact {$contactId}: " . $e->getMessage());
+            Log::warning("Failed to add tags to GHL contact {$contactId}: ".$e->getMessage());
+
             return false;
         }
     }
@@ -859,8 +965,193 @@ class GhlCalendarService
      */
     public function updateContactWessFields(string $locationId, string $contactId, string $wessCode, ?string $lastVisit = null, array $additionalFields = []): bool
     {
-        return app(\App\Services\Ghl\GhlCustomFieldService::class)
+        return app(GhlCustomFieldService::class)
             ->updateContactCustomFields($locationId, $contactId, $wessCode, $lastVisit, $additionalFields);
+    }
+
+    /**
+     * Enrich customer details from WESS if gender or birthday_month is missing.
+     * Performs a cached (24h) read-only GET request to WESS API.
+     */
+    public function enrichWessCustomer(string $locationId, array $customer): array
+    {
+        $customerId = $customer['id'] ?? null;
+        if (empty($customerId)) {
+            return [];
+        }
+
+        // If gender and birthday_month are already present in $customer, skip API lookup
+        $hasGender = ! empty($customer['gender']) || ! empty($customer['customer_detail']['gender']) || ! empty($customer['detail']['gender']);
+        $hasBday = ! empty($customer['birthday_month']) || ! empty($customer['customer_detail']['birthday_month']) || ! empty($customer['detail']['birthday_month']);
+        if ($hasGender && $hasBday) {
+            return [];
+        }
+
+        $cacheKey = "wess_cust_enrich_{$customerId}";
+        $cached = Cache::get($cacheKey);
+        if ($cached && is_array($cached)) {
+            return $cached;
+        }
+
+        try {
+            $config = WessConfig::where('location_id', $locationId)->first();
+            if ($config && $config->branch_id && $config->api_token) {
+                $wessClient = new WessClient($config->api_token, $config->base_url ?: 'https://api.wessconnect.com/api/v1/online');
+                // GET request only (READ ONLY)
+                $fullCustomer = $wessClient->getCustomer($config->branch_id, $customerId);
+                if (isset($fullCustomer['data']) && is_array($fullCustomer['data'])) {
+                    $fullCustomer = $fullCustomer['data'];
+                }
+                if (! empty($fullCustomer) && is_array($fullCustomer)) {
+                    Cache::put($cacheKey, $fullCustomer, now()->addDay());
+
+                    return $fullCustomer;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::debug("Could not enrich customer {$customerId} from WESS: ".$e->getMessage());
+        }
+
+        return [];
+    }
+
+    /**
+     * Synchronize full customer profile fields to GHL Contact:
+     * - First & Last Name
+     * - Phone Number
+     * - Email
+     * - WESS Customer Code
+     * - Salutation (Mr / Ms / Mrs / Dr)
+     * - Gender (Male / Female)
+     * - Birthday Month
+     * - NRIC (if available)
+     */
+    public function syncCustomerProfileToGhl(
+        string $locationId,
+        string $contactId,
+        array $customer,
+        string $customerName = '',
+        ?string $phone = null,
+        ?string $email = null
+    ): bool {
+        try {
+            // 1. Enrich customer profile with full WESS details if missing gender/birthday_month
+            $enriched = $this->enrichWessCustomer($locationId, $customer);
+            if (! empty($enriched)) {
+                $customer = array_merge($customer, $enriched);
+            }
+
+            $wessCode = $customer['code'] ?? ($customer['customer_code'] ?? ($customer['wess_code'] ?? null));
+
+            // Salutation
+            $salutation = null;
+            $rawSal = $customer['salutation'] ?? ($customer['title'] ?? null);
+            if (! empty($rawSal)) {
+                $salutation = ucfirst(strtolower(trim(str_replace('.', '', (string) $rawSal))));
+            }
+
+            // Gender
+            $rawGender = $customer['customer_detail']['gender'] ?? ($customer['detail']['gender'] ?? ($customer['gender'] ?? null));
+            $gender = null;
+            if (! empty($rawGender)) {
+                $upper = strtoupper(trim((string) $rawGender));
+                if (in_array($upper, ['M', 'MALE', 'BOY', 'MAN'])) {
+                    $gender = 'Male';
+                } elseif (in_array($upper, ['F', 'FEMALE', 'GIRL', 'WOMAN'])) {
+                    $gender = 'Female';
+                } else {
+                    $gender = (string) $rawGender;
+                }
+            }
+
+            // Birthday Month
+            $rawBday = $customer['customer_detail']['birthday_month'] ?? ($customer['detail']['birthday_month'] ?? ($customer['birthday_month'] ?? null));
+            $bdayMonth = null;
+            if (! empty($rawBday)) {
+                if (is_numeric($rawBday)) {
+                    $m = (int) $rawBday;
+                    if ($m >= 1 && $m <= 12) {
+                        $bdayMonth = date('F', mktime(0, 0, 0, $m, 1));
+                    }
+                } elseif (strtotime($rawBday) !== false) {
+                    $bdayMonth = date('F', strtotime($rawBday));
+                } else {
+                    $bdayMonth = (string) $rawBday;
+                }
+            } elseif (! empty($customer['customer_detail']['dob']) || ! empty($customer['dob'])) {
+                $dob = $customer['customer_detail']['dob'] ?? $customer['dob'];
+                if (strtotime($dob) !== false) {
+                    $bdayMonth = date('F', strtotime($dob));
+                }
+            }
+
+            $nric = $customer['ic_no'] ?? ($customer['nric'] ?? ($customer['customer_detail']['ic_no'] ?? null));
+            $lastVisit = $customer['last_visit'] ?? null;
+
+            // Separate first and last name if available
+            $firstName = $customer['first_name'] ?? null;
+            $lastName = $customer['last_name'] ?? null;
+            if (empty($firstName) && empty($lastName) && ! empty($customerName)) {
+                $parts = explode(' ', trim($customerName), 2);
+                $firstName = $parts[0] ?: null;
+                $lastName = $parts[1] ?? null;
+            }
+
+            // Cache check to avoid redundant API updates when fields haven't changed
+            $syncHash = md5("{$contactId}_{$firstName}_{$lastName}_{$phone}_{$email}_{$wessCode}_{$salutation}_{$gender}_{$bdayMonth}_{$nric}");
+            $cacheKey = "ghl_cust_synced_{$syncHash}";
+            if (Cache::has($cacheKey)) {
+                return true;
+            }
+
+            $additionalFields = [];
+            if (! empty($firstName)) {
+                $additionalFields['first_name'] = $firstName;
+            }
+            if (! empty($lastName)) {
+                $additionalFields['last_name'] = $lastName;
+            }
+            if (! empty($customerName)) {
+                $additionalFields['name'] = $customerName;
+            }
+            if (! empty($phone)) {
+                $additionalFields['phone'] = $phone;
+            }
+            if (! empty($email)) {
+                $additionalFields['email'] = $email;
+            }
+            if (! empty($salutation)) {
+                $additionalFields['salutation'] = $salutation;
+            }
+            if (! empty($gender)) {
+                $additionalFields['gender'] = $gender;
+            }
+            if (! empty($bdayMonth)) {
+                $additionalFields['birthday_month'] = $bdayMonth;
+            }
+            if (! empty($nric)) {
+                $additionalFields['nric'] = $nric;
+            }
+
+            $updated = $this->updateContactWessFields(
+                $locationId,
+                $contactId,
+                (string) ($wessCode ?? ''),
+                $lastVisit,
+                $additionalFields
+            );
+
+            if ($updated) {
+                Cache::put($cacheKey, true, now()->addDays(7));
+            }
+
+            return $updated;
+
+        } catch (\Throwable $e) {
+            Log::warning("Could not sync customer profile to GHL for contact {$contactId}: ".$e->getMessage());
+
+            return false;
+        }
     }
 
     /**
@@ -875,7 +1166,7 @@ class GhlCalendarService
                 return $res->json('contact') ?? $res->json();
             }
         } catch (Exception $e) {
-            Log::warning("Could not fetch GHL contact {$contactId}: " . $e->getMessage());
+            Log::warning("Could not fetch GHL contact {$contactId}: ".$e->getMessage());
         }
 
         return null;
@@ -887,15 +1178,15 @@ class GhlCalendarService
     public function getCalendarEvents(string $locationId, $dateFrom, $dateTo, ?string $calendarId = null, ?string $companyId = null): array
     {
         try {
-            $startMs = is_numeric($dateFrom) ? (int)$dateFrom : (int)(Carbon::parse($dateFrom)->startOfDay()->getTimestamp() * 1000);
-            $endMs   = is_numeric($dateTo) ? (int)$dateTo : (int)(Carbon::parse($dateTo)->endOfDay()->getTimestamp() * 1000);
+            $startMs = is_numeric($dateFrom) ? (int) $dateFrom : (int) (Carbon::parse($dateFrom)->startOfDay()->getTimestamp() * 1000);
+            $endMs = is_numeric($dateTo) ? (int) $dateTo : (int) (Carbon::parse($dateTo)->endOfDay()->getTimestamp() * 1000);
 
             $params = [
                 'locationId' => $locationId,
-                'startTime'  => (string) $startMs,
-                'endTime'    => (string) $endMs,
+                'startTime' => (string) $startMs,
+                'endTime' => (string) $endMs,
             ];
-            if (!empty($calendarId)) {
+            if (! empty($calendarId)) {
                 $params['calendarId'] = $calendarId;
             }
 
@@ -903,12 +1194,13 @@ class GhlCalendarService
 
             if ($res && $res->successful()) {
                 $json = $res->json();
+
                 return $json['events'] ?? (is_array($json) ? $json : []);
             }
 
-            Log::warning("Failed to fetch CRM calendar events for location {$locationId}: " . ($res ? $res->status() : 'null'));
+            Log::warning("Failed to fetch CRM calendar events for location {$locationId}: ".($res ? $res->status() : 'null'));
         } catch (Exception $e) {
-            Log::warning("Exception fetching CRM calendar events for location {$locationId}: " . $e->getMessage());
+            Log::warning("Exception fetching CRM calendar events for location {$locationId}: ".$e->getMessage());
         }
 
         return [];
@@ -921,14 +1213,14 @@ class GhlCalendarService
     public function reconcileExistingCrmEvents(string $locationId, $dateFrom, $dateTo, ?string $companyId = null): int
     {
         $events = $this->getCalendarEvents($locationId, $dateFrom, $dateTo, null, $companyId);
-        if (empty($events) || !is_array($events)) {
+        if (empty($events) || ! is_array($events)) {
             return 0;
         }
 
         $reconciled = 0;
 
         foreach ($events as $event) {
-            if (!is_array($event) || empty($event['id'])) {
+            if (! is_array($event) || empty($event['id'])) {
                 continue;
             }
 
@@ -941,11 +1233,11 @@ class GhlCalendarService
             }
 
             // 2. Fallback: Check title if notes signature was altered (e.g. "(WESS #12345)" or "#3516")
-            if (!$wessApptId && !empty($event['title']) && preg_match('/#(\d+)/i', $event['title'], $matches)) {
+            if (! $wessApptId && ! empty($event['title']) && preg_match('/#(\d+)/i', $event['title'], $matches)) {
                 $wessApptId = $matches[1];
             }
 
-            if (!$wessApptId) {
+            if (! $wessApptId) {
                 continue;
             }
 
@@ -954,25 +1246,25 @@ class GhlCalendarService
                 ->where('wess_appointment_id', (string) $wessApptId)
                 ->first();
 
-            $startTime = !empty($event['startTime']) ? Carbon::parse($event['startTime'])->toIso8601String() : null;
-            $endTime   = !empty($event['endTime']) ? Carbon::parse($event['endTime'])->toIso8601String() : null;
-            $status    = $event['appointmentStatus'] ?? ($event['status'] ?? 'confirmed');
-            $syncHash  = md5(($startTime ?? '') . $status . ($event['title'] ?? ''));
+            $startTime = ! empty($event['startTime']) ? Carbon::parse($event['startTime'])->toIso8601String() : null;
+            $endTime = ! empty($event['endTime']) ? Carbon::parse($event['endTime'])->toIso8601String() : null;
+            $status = $event['appointmentStatus'] ?? ($event['status'] ?? 'confirmed');
+            $syncHash = md5(($startTime ?? '').$status.($event['title'] ?? ''));
 
-            if (!$existing) {
+            if (! $existing) {
                 SyncedAppointment::create([
-                    'location_id'         => $locationId,
+                    'location_id' => $locationId,
                     'wess_appointment_id' => (string) $wessApptId,
-                    'ghl_appointment_id'  => (string) $event['id'],
-                    'ghl_contact_id'      => !empty($event['contactId']) ? (string) $event['contactId'] : null,
-                    'calendar_id'         => !empty($event['calendarId']) ? (string) $event['calendarId'] : null,
-                    'assigned_user_id'    => !empty($event['assignedUserId']) ? (string) $event['assignedUserId'] : null,
-                    'title'               => $event['title'] ?? '',
-                    'status'              => (string) $status,
-                    'start_time'          => $startTime,
-                    'end_time'            => $endTime,
-                    'sync_hash'           => $syncHash,
-                    'last_synced_at'      => now(),
+                    'ghl_appointment_id' => (string) $event['id'],
+                    'ghl_contact_id' => ! empty($event['contactId']) ? (string) $event['contactId'] : null,
+                    'calendar_id' => ! empty($event['calendarId']) ? (string) $event['calendarId'] : null,
+                    'assigned_user_id' => ! empty($event['assignedUserId']) ? (string) $event['assignedUserId'] : null,
+                    'title' => $event['title'] ?? '',
+                    'status' => (string) $status,
+                    'start_time' => $startTime,
+                    'end_time' => $endTime,
+                    'sync_hash' => $syncHash,
+                    'last_synced_at' => now(),
                 ]);
                 $reconciled++;
                 Log::info("Self-Healing Layer 2: Reconciled existing CRM appointment {$event['id']} for WESS appointment {$wessApptId} in location {$locationId}");
@@ -981,9 +1273,9 @@ class GhlCalendarService
                 if (empty($existing->ghl_appointment_id) || $existing->ghl_appointment_id !== (string) $event['id']) {
                     $existing->update([
                         'ghl_appointment_id' => (string) $event['id'],
-                        'calendar_id'        => !empty($event['calendarId']) ? (string) $event['calendarId'] : $existing->calendar_id,
-                        'assigned_user_id'   => !empty($event['assignedUserId']) ? (string) $event['assignedUserId'] : $existing->assigned_user_id,
-                        'last_synced_at'     => now(),
+                        'calendar_id' => ! empty($event['calendarId']) ? (string) $event['calendarId'] : $existing->calendar_id,
+                        'assigned_user_id' => ! empty($event['assignedUserId']) ? (string) $event['assignedUserId'] : $existing->assigned_user_id,
+                        'last_synced_at' => now(),
                     ]);
                     $reconciled++;
                 }
@@ -1001,26 +1293,26 @@ class GhlCalendarService
         try {
             $parsedStart = Carbon::parse($startTime);
             $searchEvents = $this->getCalendarEvents(
-                $locationId, 
-                $parsedStart->copy()->subHours(2), 
-                $parsedStart->copy()->addHours(2), 
+                $locationId,
+                $parsedStart->copy()->subHours(2),
+                $parsedStart->copy()->addHours(2),
                 $calendarId
             );
 
             foreach ($searchEvents as $ev) {
-                if (!is_array($ev) || empty($ev['id'])) {
+                if (! is_array($ev) || empty($ev['id'])) {
                     continue;
                 }
                 $evNotes = $ev['notes'] ?? ($ev['description'] ?? '');
-                if (preg_match('/WESS\s+Booking\s+ID:\s*' . preg_quote((string) $wessApptId, '/') . '\b/i', $evNotes)) {
+                if (preg_match('/WESS\s+Booking\s+ID:\s*'.preg_quote((string) $wessApptId, '/').'\b/i', $evNotes)) {
                     return (string) $ev['id'];
                 }
-                if (!empty($ev['title']) && str_contains($ev['title'], (string) $wessApptId)) {
+                if (! empty($ev['title']) && str_contains($ev['title'], (string) $wessApptId)) {
                     return (string) $ev['id'];
                 }
             }
         } catch (Exception $e) {
-            Log::warning("Error in findExistingCrmEventByWessId: " . $e->getMessage());
+            Log::warning('Error in findExistingCrmEventByWessId: '.$e->getMessage());
         }
 
         return null;

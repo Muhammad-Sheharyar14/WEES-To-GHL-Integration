@@ -7,6 +7,7 @@ use App\Models\SyncedAppointment;
 use App\Models\WessConfig;
 use App\Services\Wess\WessSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -19,22 +20,22 @@ class SyncedAppointmentTest extends TestCase
         parent::setUp();
 
         GhlToken::create([
-            'location_id'   => 'loc_test_sync',
-            'access_token'  => 'mock_access_token',
+            'location_id' => 'loc_test_sync',
+            'access_token' => 'mock_access_token',
             'refresh_token' => 'mock_refresh_token',
-            'user_type'     => 'Location',
-            'expires_at'    => now()->addHours(2),
-            'is_active'     => true,
+            'user_type' => 'Location',
+            'expires_at' => now()->addHours(2),
+            'is_active' => true,
         ]);
 
         WessConfig::create([
-            'location_id'     => 'loc_test_sync',
-            'api_token'       => 'test_wess_token',
-            'base_url'        => 'https://api.prelive.wessconnect.net/api/v1/online',
-            'branch_id'       => 1,
-            'calendar_id'     => 'cal_wess_123',
+            'location_id' => 'loc_test_sync',
+            'api_token' => 'test_wess_token',
+            'base_url' => 'https://api.prelive.wessconnect.net/api/v1/online',
+            'branch_id' => 1,
+            'calendar_id' => 'cal_wess_123',
             'is_sync_enabled' => true,
-            'is_connected'    => true,
+            'is_connected' => true,
         ]);
     }
 
@@ -44,35 +45,38 @@ class SyncedAppointmentTest extends TestCase
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 101,
-                        'date'            => '2026-10-15T09:00:00Z',
-                        'status'          => 'confirmed',
+                        'id' => 101,
+                        'date' => '2026-10-15T09:00:00Z',
+                        'status' => 'confirmed',
                         'processing_time' => 45,
-                        'service_name'    => 'Hair Spa',
-                        'customer'        => [
-                            'first_name'   => 'Jane',
-                            'last_name'    => 'Doe',
+                        'service_name' => 'Hair Spa',
+                        'customer' => [
+                            'first_name' => 'Jane',
+                            'last_name' => 'Doe',
                             'phone_mobile' => '+60123456789',
                         ],
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 1,
-                        'count'        => 1,
-                        'per_page'     => 100,
+                        'total' => 1,
+                        'count' => 1,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
             'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
                 'contact' => ['id' => 'ghl_contact_jane'],
             ], 200),
+            'https://services.leadconnectorhq.com/contacts/*/tags' => Http::response([
+                'tags' => ['WESS'],
+            ], 200),
             'https://services.leadconnectorhq.com/calendars/events/appointments' => Http::response([
-                'id'         => 'ghl_appt_jane_101',
+                'id' => 'ghl_appt_jane_101',
                 'calendarId' => 'cal_wess_123',
-                'status'     => 'confirmed',
+                'status' => 'confirmed',
             ], 200),
         ]);
 
@@ -84,11 +88,11 @@ class SyncedAppointmentTest extends TestCase
 
         // Assert record exists in synced_appointments DB table
         $this->assertDatabaseHas('synced_appointments', [
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '101',
-            'ghl_appointment_id'  => 'ghl_appt_jane_101',
-            'ghl_contact_id'      => 'ghl_contact_jane',
-            'calendar_id'         => 'cal_wess_123',
+            'ghl_appointment_id' => 'ghl_appt_jane_101',
+            'ghl_contact_id' => 'ghl_contact_jane',
+            'calendar_id' => 'cal_wess_123',
         ]);
     }
 
@@ -99,38 +103,38 @@ class SyncedAppointmentTest extends TestCase
         $time = 45;
         $service = 'Hair Spa';
         $custName = 'Jane Doe';
-        $hash = md5($date . $status . $time . $service . $custName);
+        $hash = md5($date.$status.$time.$service.$custName);
 
         // Pre-populate synced appointment record in DB
         SyncedAppointment::create([
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '101',
-            'ghl_appointment_id'  => 'ghl_appt_jane_101',
-            'ghl_contact_id'      => 'ghl_contact_jane',
-            'calendar_id'         => 'cal_wess_123',
-            'sync_hash'           => $hash,
-            'last_synced_at'      => now(),
+            'ghl_appointment_id' => 'ghl_appt_jane_101',
+            'ghl_contact_id' => 'ghl_contact_jane',
+            'calendar_id' => 'cal_wess_123',
+            'sync_hash' => $hash,
+            'last_synced_at' => now(),
         ]);
 
         Http::fake([
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 101,
-                        'date'            => $date,
-                        'status'          => $status,
+                        'id' => 101,
+                        'date' => $date,
+                        'status' => $status,
                         'processing_time' => $time,
-                        'service_name'    => $service,
-                        'customer_name'   => $custName,
+                        'service_name' => $service,
+                        'customer_name' => $custName,
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 1,
-                        'count'        => 1,
-                        'per_page'     => 100,
+                        'total' => 1,
+                        'count' => 1,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
@@ -153,49 +157,52 @@ class SyncedAppointmentTest extends TestCase
         $oldHash = md5('old_data');
 
         SyncedAppointment::create([
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '102',
-            'ghl_appointment_id'  => 'ghl_appt_existing_102',
-            'ghl_contact_id'      => 'ghl_contact_102',
-            'calendar_id'         => 'cal_wess_123',
-            'sync_hash'           => $oldHash,
-            'last_synced_at'      => now()->subDay(),
+            'ghl_appointment_id' => 'ghl_appt_existing_102',
+            'ghl_contact_id' => 'ghl_contact_102',
+            'calendar_id' => 'cal_wess_123',
+            'sync_hash' => $oldHash,
+            'last_synced_at' => now()->subDay(),
         ]);
 
         Http::fake([
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 102,
-                        'date'            => '2026-10-16T14:00:00Z', // changed date
-                        'status'          => 'confirmed',
+                        'id' => 102,
+                        'date' => '2026-10-16T14:00:00Z', // changed date
+                        'status' => 'confirmed',
                         'processing_time' => 60,
-                        'service_name'    => 'Massage Therapy',
-                        'customer'        => [
-                            'first_name'   => 'Alex',
-                            'last_name'    => 'Smith',
+                        'service_name' => 'Massage Therapy',
+                        'customer' => [
+                            'first_name' => 'Alex',
+                            'last_name' => 'Smith',
                             'phone_mobile' => '+60199999999',
                         ],
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 1,
-                        'count'        => 1,
-                        'per_page'     => 100,
+                        'total' => 1,
+                        'count' => 1,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
             'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
                 'contact' => ['id' => 'ghl_contact_102'],
             ], 200),
+            'https://services.leadconnectorhq.com/contacts/*/tags' => Http::response([
+                'tags' => ['WESS'],
+            ], 200),
             // PUT request to update the EXISTING appointment
             'https://services.leadconnectorhq.com/calendars/events/appointments/ghl_appt_existing_102' => Http::response([
-                'id'         => 'ghl_appt_existing_102',
+                'id' => 'ghl_appt_existing_102',
                 'calendarId' => 'cal_wess_123',
-                'status'     => 'confirmed',
+                'status' => 'confirmed',
             ], 200),
         ]);
 
@@ -234,66 +241,69 @@ class SyncedAppointmentTest extends TestCase
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 201,
-                        'date'            => '2026-10-17T10:00:00Z',
-                        'status'          => 'confirmed',
+                        'id' => 201,
+                        'date' => '2026-10-17T10:00:00Z',
+                        'status' => 'confirmed',
                         'processing_time' => 30,
-                        'service_name'    => 'Facial Express',
-                        'customer'        => [
-                            'first_name'   => 'User',
-                            'last_name'    => 'One',
+                        'service_name' => 'Facial Express',
+                        'customer' => [
+                            'first_name' => 'User',
+                            'last_name' => 'One',
                             'phone_mobile' => '+60111111111',
                         ],
                     ],
                     [
-                        'id'              => 202,
-                        'date'            => '2026-10-17T11:00:00Z',
-                        'status'          => 'confirmed',
+                        'id' => 202,
+                        'date' => '2026-10-17T11:00:00Z',
+                        'status' => 'confirmed',
                         'processing_time' => 30,
-                        'service_name'    => 'Facial Express',
-                        'customer'        => [
-                            'first_name'   => 'User',
-                            'last_name'    => 'Two',
+                        'service_name' => 'Facial Express',
+                        'customer' => [
+                            'first_name' => 'User',
+                            'last_name' => 'Two',
                             'phone_mobile' => '+60122222222',
                         ],
                     ],
                     [
-                        'id'              => 203,
-                        'date'            => '2026-10-17T12:00:00Z',
-                        'status'          => 'confirmed',
+                        'id' => 203,
+                        'date' => '2026-10-17T12:00:00Z',
+                        'status' => 'confirmed',
                         'processing_time' => 30,
-                        'service_name'    => 'Facial Express',
-                        'customer'        => [
-                            'first_name'   => 'User',
-                            'last_name'    => 'Three',
+                        'service_name' => 'Facial Express',
+                        'customer' => [
+                            'first_name' => 'User',
+                            'last_name' => 'Three',
                             'phone_mobile' => '+60133333333',
                         ],
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 3,
-                        'count'        => 3,
-                        'per_page'     => 100,
+                        'total' => 3,
+                        'count' => 3,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
             'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
                 'contact' => ['id' => 'ghl_contact_mock'],
             ], 200),
+            'https://services.leadconnectorhq.com/contacts/*/tags' => Http::response([
+                'tags' => ['WESS'],
+            ], 200),
             'https://services.leadconnectorhq.com/calendars/events/appointments' => function ($request) use (&$hasToggled) {
                 // Simulate user turning off sync on custom page after first appointment is dispatched!
-                if (!$hasToggled) {
+                if (! $hasToggled) {
                     $hasToggled = true;
                     WessConfig::where('location_id', 'loc_test_sync')->update(['is_sync_enabled' => false]);
                 }
 
                 return Http::response([
-                    'id'         => 'ghl_appt_first',
+                    'id' => 'ghl_appt_first',
                     'calendarId' => 'cal_wess_123',
-                    'status'     => 'confirmed',
+                    'status' => 'confirmed',
                 ], 200);
             },
         ]);
@@ -308,22 +318,22 @@ class SyncedAppointmentTest extends TestCase
 
         // Appointments 202 and 203 must NEVER have been synced
         $this->assertDatabaseHas('synced_appointments', [
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '201',
         ]);
         $this->assertDatabaseMissing('synced_appointments', [
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '202',
         ]);
         $this->assertDatabaseMissing('synced_appointments', [
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '203',
         ]);
 
         // Verify stopped log was recorded
         $this->assertDatabaseHas('webhook_logs', [
             'location_id' => 'loc_test_sync',
-            'event_type'  => 'WessSyncStoppedByUser',
+            'event_type' => 'WessSyncStoppedByUser',
         ]);
     }
 
@@ -332,7 +342,7 @@ class SyncedAppointmentTest extends TestCase
         // 1. synced_appointments table is completely empty (e.g. after uninstall / reconnect)
         $this->assertEquals(0, SyncedAppointment::count());
 
-        $hasPutCalled  = false;
+        $hasPutCalled = false;
         $hasPostCalled = false;
 
         Http::fake([
@@ -340,25 +350,25 @@ class SyncedAppointmentTest extends TestCase
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 777,
-                        'date'            => '2026-10-26T10:00:00.000000Z',
-                        'status'          => 'confirmed',
+                        'id' => 777,
+                        'date' => '2026-10-26T10:00:00.000000Z',
+                        'status' => 'confirmed',
                         'processing_time' => 30,
-                        'service_name'    => 'Deep Tissue Massage',
-                        'customer'        => [
-                            'first_name'   => 'Sherry',
-                            'last_name'    => 'Test',
+                        'service_name' => 'Deep Tissue Massage',
+                        'customer' => [
+                            'first_name' => 'Sherry',
+                            'last_name' => 'Test',
                             'phone_mobile' => '+6581234567',
                         ],
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 1,
-                        'count'        => 1,
-                        'per_page'     => 100,
+                        'total' => 1,
+                        'count' => 1,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
@@ -366,26 +376,30 @@ class SyncedAppointmentTest extends TestCase
             'https://services.leadconnectorhq.com/calendars/events?*' => Http::response([
                 'events' => [
                     [
-                        'id'                => 'ghl_existing_event_777',
-                        'calendarId'        => 'cal_wess_123',
-                        'locationId'        => 'loc_test_sync',
-                        'contactId'         => 'cnt_sherry_123',
-                        'startTime'         => '2026-10-26T10:00:00.000Z',
-                        'endTime'           => '2026-10-26T10:30:00.000Z',
-                        'title'             => 'Sherry Test\'s Appointment',
+                        'id' => 'ghl_existing_event_777',
+                        'calendarId' => 'cal_wess_123',
+                        'locationId' => 'loc_test_sync',
+                        'contactId' => 'cnt_sherry_123',
+                        'startTime' => '2026-10-26T10:00:00.000Z',
+                        'endTime' => '2026-10-26T10:30:00.000Z',
+                        'title' => 'Sherry Test\'s Appointment',
                         'appointmentStatus' => 'confirmed',
-                        'notes'             => 'WESS Booking ID: 777',
+                        'notes' => 'WESS Booking ID: 777',
                     ],
                 ],
             ], 200),
             'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
                 'contact' => ['id' => 'cnt_sherry_123'],
             ], 200),
+            'https://services.leadconnectorhq.com/contacts/*/tags' => Http::response([
+                'tags' => ['WESS'],
+            ], 200),
             // If GHL receives a POST to create appointment, fail the test
             'https://services.leadconnectorhq.com/calendars/events/appointments' => function ($request) use (&$hasPostCalled) {
                 if ($request->method() === 'POST') {
                     $hasPostCalled = true;
                 }
+
                 return Http::response(['id' => 'unexpected_duplicate'], 201);
             },
             // If GHL receives a PUT to update appointment, record it
@@ -393,6 +407,7 @@ class SyncedAppointmentTest extends TestCase
                 if ($request->method() === 'PUT') {
                     $hasPutCalled = true;
                 }
+
                 return Http::response(['id' => 'ghl_existing_event_777', 'status' => 'confirmed'], 200);
             },
         ]);
@@ -402,9 +417,9 @@ class SyncedAppointmentTest extends TestCase
 
         // Verify synced_appointments was automatically rebuilt from CRM events
         $this->assertDatabaseHas('synced_appointments', [
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '777',
-            'ghl_appointment_id'  => 'ghl_existing_event_777',
+            'ghl_appointment_id' => 'ghl_existing_event_777',
         ]);
 
         // CRITICAL ASSERTION: A duplicate POST was NEVER executed!
@@ -422,9 +437,9 @@ class SyncedAppointmentTest extends TestCase
         Http::fake([
             'https://api.prelive.wessconnect.net/api/v1/online/customers/lookup/phone-number/*' => Http::response([
                 [
-                    'id'           => 4748191,
-                    'first_name'   => 'Sherry',
-                    'last_name'    => 'Test',
+                    'id' => 4748191,
+                    'first_name' => 'Sherry',
+                    'last_name' => 'Test',
                     'phone_mobile' => '81234567',
                 ],
             ], 200),
@@ -433,21 +448,22 @@ class SyncedAppointmentTest extends TestCase
                     $hasCancelCalled = true;
                     $cancelledCustomerId = $request->data()['customer_id'] ?? null;
                 }
+
                 return Http::response(['success' => true], 200);
             },
         ]);
 
         // CRM sends cancellation webhook for an appointment created prior to uninstall
         $response = $this->postJson('/api/webhooks/ghl', [
-            'type'        => 'AppointmentStatusUpdate',
-            'locationId'  => 'loc_test_sync',
+            'type' => 'AppointmentStatusUpdate',
+            'locationId' => 'loc_test_sync',
             'appointment' => [
-                'id'                => 'ghl_appt_old_28092284',
+                'id' => 'ghl_appt_old_28092284',
                 'appointmentStatus' => 'cancelled',
-                'notes'             => 'WESS Booking ID: 28092284',
-                'phone'             => '+6581234567',
-                'title'             => 'Sherry Test (WESS #28092284)',
-                'startTime'         => '2026-10-26T18:00:00+08:00',
+                'notes' => 'WESS Booking ID: 28092284',
+                'phone' => '+6581234567',
+                'title' => 'Sherry Test (WESS #28092284)',
+                'startTime' => '2026-10-26T18:00:00+08:00',
             ],
         ]);
 
@@ -459,10 +475,10 @@ class SyncedAppointmentTest extends TestCase
 
         // Verify mapping was saved to synced_appointments marked as cancelled
         $this->assertDatabaseHas('synced_appointments', [
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '28092284',
-            'ghl_appointment_id'  => 'ghl_appt_old_28092284',
-            'status'              => 'cancelled',
+            'ghl_appointment_id' => 'ghl_appt_old_28092284',
+            'status' => 'cancelled',
         ]);
     }
 
@@ -472,7 +488,7 @@ class SyncedAppointmentTest extends TestCase
         $config = WessConfig::where('location_id', 'loc_test_sync')->first();
         $config->update([
             'is_sync_enabled' => true,
-            'sync_paused_at'  => $pausedAt,
+            'sync_paused_at' => $pausedAt,
         ]);
 
         $capturedDateFrom = null;
@@ -482,48 +498,51 @@ class SyncedAppointmentTest extends TestCase
                 // Extract query filter date_from from PSR-7 URI
                 $queryString = $request->toPsrRequest()->getUri()->getQuery();
                 parse_str($queryString, $query);
-                if (empty($capturedDateFrom) && !empty($query['filter']['date_from'])) {
+                if (empty($capturedDateFrom) && ! empty($query['filter']['date_from'])) {
                     $capturedDateFrom = $query['filter']['date_from'];
                 }
 
                 return Http::response([
                     'data' => [
                         [
-                            'id'              => 9901,
-                            'date'            => $pausedAt->copy()->addDays(2)->toIso8601String(),
-                            'status'          => 'confirmed',
+                            'id' => 9901,
+                            'date' => $pausedAt->copy()->addDays(2)->toIso8601String(),
+                            'status' => 'confirmed',
                             'processing_time' => 60,
-                            'service_name'    => 'Facial Treatment',
-                            'customer'        => [
-                                'first_name'   => 'Recovered',
-                                'last_name'    => 'Client',
+                            'service_name' => 'Facial Treatment',
+                            'customer' => [
+                                'first_name' => 'Recovered',
+                                'last_name' => 'Client',
                                 'phone_mobile' => '+6581234567',
-                                'email'        => 'recovered@example.com',
+                                'email' => 'recovered@example.com',
                             ],
-                            'employees'       => [],
+                            'employees' => [],
                         ],
                     ],
                 ], 200);
             },
             'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
-                'contact' => ['id' => 'cnt_recovered_1']
+                'contact' => ['id' => 'cnt_recovered_1'],
+            ], 200),
+            'https://services.leadconnectorhq.com/contacts/*/tags' => Http::response([
+                'tags' => ['WESS'],
             ], 200),
             'https://services.leadconnectorhq.com/calendars/events/appointments' => Http::response([
-                'id'         => 'ghl_recovered_event_9901',
+                'id' => 'ghl_recovered_event_9901',
                 'calendarId' => 'cal_wess_123',
-                'status'     => 'confirmed',
+                'status' => 'confirmed',
             ], 200),
             'https://services.leadconnectorhq.com/calendars/events*' => Http::response([
-                'events' => []
+                'events' => [],
             ], 200),
             'https://services.leadconnectorhq.com/users*' => Http::response([
-                'users' => []
+                'users' => [],
             ], 200),
             'https://services.leadconnectorhq.com/contacts/*' => Http::response([
-                'contact' => ['id' => 'cnt_recovered_1']
+                'contact' => ['id' => 'cnt_recovered_1'],
             ], 200),
             'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
-                'customFields' => []
+                'customFields' => [],
             ], 200),
         ]);
 
@@ -539,9 +558,9 @@ class SyncedAppointmentTest extends TestCase
 
         // Verify that the recovered appointment was synced to database
         $this->assertDatabaseHas('synced_appointments', [
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '9901',
-            'ghl_appointment_id'  => 'ghl_recovered_event_9901',
+            'ghl_appointment_id' => 'ghl_recovered_event_9901',
         ]);
 
         // Verify that sync_paused_at was reset to null after catch-up completed
@@ -556,14 +575,14 @@ class SyncedAppointmentTest extends TestCase
 
         // Existing active booking in CRM
         $synced = SyncedAppointment::create([
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '3501',
-            'ghl_appointment_id'  => 'ghl_event_3501',
-            'ghl_contact_id'      => 'cnt_jane_3501',
-            'calendar_id'         => 'cal_wess_123',
-            'status'              => 'confirmed',
-            'start_time'          => now()->addDays(2)->format('Y-m-d H:i:s'),
-            'sync_hash'           => 'old_hash',
+            'ghl_appointment_id' => 'ghl_event_3501',
+            'ghl_contact_id' => 'cnt_jane_3501',
+            'calendar_id' => 'cal_wess_123',
+            'status' => 'confirmed',
+            'start_time' => now()->addDays(2)->format('Y-m-d H:i:s'),
+            'sync_hash' => 'old_hash',
         ]);
 
         $hasGhlCancelled = false;
@@ -573,44 +592,45 @@ class SyncedAppointmentTest extends TestCase
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 3501,
-                        'date'            => now()->addDays(2)->format('Y-m-d H:i:s'),
-                        'status'          => 'BC',
+                        'id' => 3501,
+                        'date' => now()->addDays(2)->format('Y-m-d H:i:s'),
+                        'status' => 'BC',
                         'processing_time' => 60,
-                        'service_name'    => 'Hair Wash',
-                        'customer'        => [
-                            'first_name'   => 'Jane',
-                            'last_name'    => 'Doe',
+                        'service_name' => 'Hair Wash',
+                        'customer' => [
+                            'first_name' => 'Jane',
+                            'last_name' => 'Doe',
                             'phone_mobile' => '+6591234567',
                         ],
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 1,
-                        'count'        => 1,
-                        'per_page'     => 100,
+                        'total' => 1,
+                        'count' => 1,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
             // GHL receives cancellation for ghl_event_3501
             'https://services.leadconnectorhq.com/calendars/events/appointments/ghl_event_3501*' => function ($request) use (&$hasGhlCancelled) {
                 $hasGhlCancelled = true;
+
                 return Http::response(['success' => true], 200);
             },
             'https://services.leadconnectorhq.com/calendars/events*' => Http::response([
-                'events' => []
+                'events' => [],
             ], 200),
             'https://services.leadconnectorhq.com/users*' => Http::response([
-                'users' => []
+                'users' => [],
             ], 200),
             'https://services.leadconnectorhq.com/contacts/*' => Http::response([
-                'contact' => ['id' => 'cnt_jane_3501']
+                'contact' => ['id' => 'cnt_jane_3501'],
             ], 200),
             'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
-                'customFields' => []
+                'customFields' => [],
             ], 200),
         ]);
 
@@ -631,14 +651,14 @@ class SyncedAppointmentTest extends TestCase
 
         // Existing active booking in CRM
         $synced = SyncedAppointment::create([
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '3502',
-            'ghl_appointment_id'  => 'ghl_event_3502',
-            'ghl_contact_id'      => 'cnt_jane_3502',
-            'calendar_id'         => 'cal_wess_123',
-            'status'              => 'confirmed',
-            'start_time'          => now()->addDays(2)->format('Y-m-d H:i:s'),
-            'sync_hash'           => 'old_hash_3502',
+            'ghl_appointment_id' => 'ghl_event_3502',
+            'ghl_contact_id' => 'cnt_jane_3502',
+            'calendar_id' => 'cal_wess_123',
+            'status' => 'confirmed',
+            'start_time' => now()->addDays(2)->format('Y-m-d H:i:s'),
+            'sync_hash' => 'old_hash_3502',
         ]);
 
         $hasGhlCancelled = false;
@@ -648,44 +668,45 @@ class SyncedAppointmentTest extends TestCase
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 3502,
-                        'date'            => now()->addDays(2)->format('Y-m-d H:i:s'),
-                        'status'          => 'Last Minute Cancel',
+                        'id' => 3502,
+                        'date' => now()->addDays(2)->format('Y-m-d H:i:s'),
+                        'status' => 'Last Minute Cancel',
                         'processing_time' => 45,
-                        'service_name'    => 'Scalp Treatment',
-                        'customer'        => [
-                            'first_name'   => 'Jane',
-                            'last_name'    => 'Doe',
+                        'service_name' => 'Scalp Treatment',
+                        'customer' => [
+                            'first_name' => 'Jane',
+                            'last_name' => 'Doe',
                             'phone_mobile' => '+6591234567',
                         ],
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 1,
-                        'count'        => 1,
-                        'per_page'     => 100,
+                        'total' => 1,
+                        'count' => 1,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
             // GHL receives cancellation for ghl_event_3502
             'https://services.leadconnectorhq.com/calendars/events/appointments/ghl_event_3502*' => function ($request) use (&$hasGhlCancelled) {
                 $hasGhlCancelled = true;
+
                 return Http::response(['success' => true], 200);
             },
             'https://services.leadconnectorhq.com/calendars/events*' => Http::response([
-                'events' => []
+                'events' => [],
             ], 200),
             'https://services.leadconnectorhq.com/users*' => Http::response([
-                'users' => []
+                'users' => [],
             ], 200),
             'https://services.leadconnectorhq.com/contacts/*' => Http::response([
-                'contact' => ['id' => 'cnt_jane_3502']
+                'contact' => ['id' => 'cnt_jane_3502'],
             ], 200),
             'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
-                'customFields' => []
+                'customFields' => [],
             ], 200),
         ]);
 
@@ -707,26 +728,26 @@ class SyncedAppointmentTest extends TestCase
 
         // 1. Old booking (#3501) that was cancelled during reschedule
         $oldSync = SyncedAppointment::create([
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '3501',
-            'ghl_appointment_id'  => $commonGhlApptId,
-            'ghl_contact_id'      => 'cnt_jane_3501',
-            'calendar_id'         => 'cal_wess_123',
-            'status'              => 'confirmed', // was active previously
-            'start_time'          => now()->addDays(1)->format('Y-m-d H:i:s'),
-            'sync_hash'           => 'old_hash',
+            'ghl_appointment_id' => $commonGhlApptId,
+            'ghl_contact_id' => 'cnt_jane_3501',
+            'calendar_id' => 'cal_wess_123',
+            'status' => 'confirmed', // was active previously
+            'start_time' => now()->addDays(1)->format('Y-m-d H:i:s'),
+            'sync_hash' => 'old_hash',
         ]);
 
         // 2. New active rescheduled booking (#3503) for the same GHL event
         $activeRescheduleSync = SyncedAppointment::create([
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '3503',
-            'ghl_appointment_id'  => $commonGhlApptId,
-            'ghl_contact_id'      => 'cnt_jane_3501',
-            'calendar_id'         => 'cal_wess_123',
-            'status'              => 'confirmed', // active!
-            'start_time'          => now()->addDays(3)->format('Y-m-d H:i:s'),
-            'sync_hash'           => 'new_hash_3503',
+            'ghl_appointment_id' => $commonGhlApptId,
+            'ghl_contact_id' => 'cnt_jane_3501',
+            'calendar_id' => 'cal_wess_123',
+            'status' => 'confirmed', // active!
+            'start_time' => now()->addDays(3)->format('Y-m-d H:i:s'),
+            'sync_hash' => 'new_hash_3503',
         ]);
 
         $hasGhlCancelled = false;
@@ -736,46 +757,47 @@ class SyncedAppointmentTest extends TestCase
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 3501,
-                        'date'            => now()->addDays(1)->format('Y-m-d H:i:s'),
-                        'status'          => 'Last Minute Cancel',
+                        'id' => 3501,
+                        'date' => now()->addDays(1)->format('Y-m-d H:i:s'),
+                        'status' => 'Last Minute Cancel',
                         'processing_time' => 60,
-                        'service_name'    => 'Hair Wash',
-                        'customer'        => [
-                            'first_name'   => 'Jane',
-                            'last_name'    => 'Doe',
+                        'service_name' => 'Hair Wash',
+                        'customer' => [
+                            'first_name' => 'Jane',
+                            'last_name' => 'Doe',
                             'phone_mobile' => '+6591234567',
                         ],
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 1,
-                        'count'        => 1,
-                        'per_page'     => 100,
+                        'total' => 1,
+                        'count' => 1,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
             // If GHL cancellation is triggered for the common GHL event, capture it (should NOT be called!)
-            'https://services.leadconnectorhq.com/calendars/events/appointments/' . $commonGhlApptId . '*' => function ($request) use (&$hasGhlCancelled) {
+            'https://services.leadconnectorhq.com/calendars/events/appointments/'.$commonGhlApptId.'*' => function ($request) use (&$hasGhlCancelled) {
                 if ($request->method() === 'DELETE' || ($request->method() === 'PUT' && ($request->data()['appointmentStatus'] ?? '') === 'cancelled')) {
                     $hasGhlCancelled = true;
                 }
+
                 return Http::response(['success' => true], 200);
             },
             'https://services.leadconnectorhq.com/calendars/events*' => Http::response([
-                'events' => []
+                'events' => [],
             ], 200),
             'https://services.leadconnectorhq.com/users*' => Http::response([
-                'users' => []
+                'users' => [],
             ], 200),
             'https://services.leadconnectorhq.com/contacts/*' => Http::response([
-                'contact' => ['id' => 'cnt_jane_3501']
+                'contact' => ['id' => 'cnt_jane_3501'],
             ], 200),
             'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
-                'customFields' => []
+                'customFields' => [],
             ], 200),
         ]);
 
@@ -798,22 +820,22 @@ class SyncedAppointmentTest extends TestCase
 
     public function test_wess_therapist_change_cancels_old_calendar_event_and_creates_on_new_calendar(): void
     {
-        \Illuminate\Support\Facades\Cache::flush();
+        Cache::flush();
         $config = WessConfig::where('location_id', 'loc_test_sync')->first();
 
         $empKeyPamela = '10685Pamela';
-        $oldHash = md5('2026-11-20T10:00:00Z' . 'confirmed' . 60 . 'Facial' . 'Jane Doe' . $empKeyPamela);
+        $oldHash = md5('2026-11-20T10:00:00Z'.'confirmed'. 60 .'Facial'.'Jane Doe'.$empKeyPamela);
 
         $existingSync = SyncedAppointment::create([
-            'location_id'         => 'loc_test_sync',
+            'location_id' => 'loc_test_sync',
             'wess_appointment_id' => '9001',
-            'ghl_appointment_id'  => 'ghl_appt_on_pamela_calendar',
-            'ghl_contact_id'      => 'cnt_jane_9001',
-            'calendar_id'         => 'cal_pamela',
-            'assigned_user_id'    => 'user_pamela',
-            'status'              => 'confirmed',
-            'start_time'          => '2026-11-20 10:00:00',
-            'sync_hash'           => $oldHash,
+            'ghl_appointment_id' => 'ghl_appt_on_pamela_calendar',
+            'ghl_contact_id' => 'cnt_jane_9001',
+            'calendar_id' => 'cal_pamela',
+            'assigned_user_id' => 'user_pamela',
+            'status' => 'confirmed',
+            'start_time' => '2026-11-20 10:00:00',
+            'sync_hash' => $oldHash,
         ]);
 
         $oldCalendarCancelled = false;
@@ -823,6 +845,7 @@ class SyncedAppointmentTest extends TestCase
             // 1. Specific appointment booking endpoints MUST be listed before calendars* wildcard
             'https://services.leadconnectorhq.com/calendars/events/appointments/ghl_appt_on_pamela_calendar*' => function ($request) use (&$oldCalendarCancelled) {
                 $oldCalendarCancelled = true;
+
                 return Http::response(['success' => true], 200);
             },
 
@@ -831,10 +854,11 @@ class SyncedAppointmentTest extends TestCase
                 if (($data['calendarId'] ?? '') === 'cal_lavender') {
                     $newCalendarCreated = true;
                 }
+
                 return Http::response([
-                    'id'         => 'ghl_appt_on_lavender_calendar',
+                    'id' => 'ghl_appt_on_lavender_calendar',
                     'calendarId' => 'cal_lavender',
-                    'status'     => 'confirmed',
+                    'status' => 'confirmed',
                 ], 201);
             },
 
@@ -842,29 +866,29 @@ class SyncedAppointmentTest extends TestCase
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/appointments*' => Http::response([
                 'data' => [
                     [
-                        'id'              => 9001,
-                        'date'            => '2026-11-20T10:00:00Z',
-                        'status'          => 'confirmed',
+                        'id' => 9001,
+                        'date' => '2026-11-20T10:00:00Z',
+                        'status' => 'confirmed',
                         'processing_time' => 60,
-                        'service_name'    => 'Facial',
-                        'customer'        => [
-                            'id'           => 555,
-                            'first_name'   => 'Jane',
-                            'last_name'    => 'Doe',
+                        'service_name' => 'Facial',
+                        'customer' => [
+                            'id' => 555,
+                            'first_name' => 'Jane',
+                            'last_name' => 'Doe',
                             'phone_mobile' => '+6591234567',
                         ],
-                        'employees'       => [
+                        'employees' => [
                             ['id' => 10684, 'first_name' => 'Lavender', 'salutation' => 'MS'],
                         ],
                     ],
                 ],
                 'meta' => [
                     'pagination' => [
-                        'total'        => 1,
-                        'count'        => 1,
-                        'per_page'     => 100,
+                        'total' => 1,
+                        'count' => 1,
+                        'per_page' => 100,
                         'current_page' => 1,
-                        'total_pages'  => 1,
+                        'total_pages' => 1,
                     ],
                 ],
             ], 200),
@@ -874,26 +898,26 @@ class SyncedAppointmentTest extends TestCase
                 'users' => [
                     ['id' => 'user_lavender', 'name' => 'Lavender', 'email' => 'lavender@ample.com'],
                     ['id' => 'user_pamela', 'name' => 'Pamela', 'email' => 'pamela@ample.com'],
-                ]
+                ],
             ], 200),
             'https://services.leadconnectorhq.com/calendars*' => Http::response([
                 'calendars' => [
                     ['id' => 'cal_lavender', 'name' => 'Lavender Calendar', 'userId' => 'user_lavender'],
                     ['id' => 'cal_pamela', 'name' => 'Pamela Calendar', 'userId' => 'user_pamela'],
-                ]
+                ],
             ], 200),
             'https://api.prelive.wessconnect.net/api/v1/online/branches/1/employees*' => Http::response([
                 'data' => [
                     ['id' => 10684, 'first_name' => 'Lavender', 'salutation' => 'MS'],
                     ['id' => 10685, 'first_name' => 'Pamela', 'salutation' => 'MS'],
-                ]
+                ],
             ], 200),
 
             'https://services.leadconnectorhq.com/contacts/*' => Http::response([
-                'contact' => ['id' => 'cnt_jane_9001']
+                'contact' => ['id' => 'cnt_jane_9001'],
             ], 200),
             'https://services.leadconnectorhq.com/locations/*/customFields' => Http::response([
-                'customFields' => []
+                'customFields' => [],
             ], 200),
         ]);
 
@@ -909,4 +933,3 @@ class SyncedAppointmentTest extends TestCase
         $this->assertEquals('ghl_appt_on_lavender_calendar', $existingSync->ghl_appointment_id);
     }
 }
-

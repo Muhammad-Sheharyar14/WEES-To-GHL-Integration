@@ -261,6 +261,23 @@ class GhlCustomFieldService
             $contactPayload['customFields'] = $customFieldsPayload;
         }
 
+        // Core profile fields (First Name, Last Name, Name, Phone, Email)
+        if (!empty($additionalFields['first_name'])) {
+            $contactPayload['firstName'] = (string) $additionalFields['first_name'];
+        }
+        if (!empty($additionalFields['last_name'])) {
+            $contactPayload['lastName'] = (string) $additionalFields['last_name'];
+        }
+        if (!empty($additionalFields['name'])) {
+            $contactPayload['name'] = (string) $additionalFields['name'];
+        }
+        if (!empty($additionalFields['phone'])) {
+            $contactPayload['phone'] = (string) $additionalFields['phone'];
+        }
+        if (!empty($additionalFields['email'])) {
+            $contactPayload['email'] = (string) $additionalFields['email'];
+        }
+
         // Native CONTACT SOURCE in MiniChat X (Martin requirement: use CONTACT SOURCE, do not touch Contact type)
         $sourceVal = $additionalFields['contact_source'] ?? $additionalFields['source'] ?? null;
         if (!empty($sourceVal)) {

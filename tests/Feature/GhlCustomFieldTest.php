@@ -194,6 +194,9 @@ class GhlCustomFieldTest extends TestCase
             'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
                 'contact' => ['id' => 'cnt_wess_tag_123']
             ], 200),
+            'https://services.leadconnectorhq.com/contacts/cnt_wess_tag_123/tags' => Http::response([
+                'tags' => ['WESS']
+            ], 200),
         ]);
 
         $calendarService = app(\App\Services\Ghl\GhlCalendarService::class);
@@ -201,8 +204,18 @@ class GhlCustomFieldTest extends TestCase
 
         $this->assertEquals('cnt_wess_tag_123', $contactId);
 
+        // Verify contacts/upsert does NOT contain 'tags' to preserve staff-keyed tags (VIP, Packages, etc.)
         Http::assertSent(function ($request) {
             if ($request->url() === 'https://services.leadconnectorhq.com/contacts/upsert' && $request->method() === 'POST') {
+                $data = $request->data();
+                return !isset($data['tags']);
+            }
+            return false;
+        });
+
+        // Verify WESS tag is additively attached via dedicated tags endpoint
+        Http::assertSent(function ($request) {
+            if ($request->url() === 'https://services.leadconnectorhq.com/contacts/cnt_wess_tag_123/tags' && $request->method() === 'POST') {
                 $data = $request->data();
                 return isset($data['tags']) && in_array('WESS', $data['tags']);
             }

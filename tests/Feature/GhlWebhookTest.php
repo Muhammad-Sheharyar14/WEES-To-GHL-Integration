@@ -118,6 +118,7 @@ class GhlWebhookTest extends TestCase
 
         Http::fake([
             'https://api.prelive.wessconnect.net/*' => Http::response(['status' => 'cancelled'], 200),
+            'https://services.leadconnectorhq.com/*' => Http::response(['contact' => ['id' => 'contact_123', 'phone' => '+6591234567']], 200),
         ]);
 
         $response = $this->postJson('/api/webhook', [

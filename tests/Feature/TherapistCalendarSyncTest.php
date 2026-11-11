@@ -95,6 +95,9 @@ class TherapistCalendarSyncTest extends TestCase
             'https://services.leadconnectorhq.com/contacts/upsert' => Http::response([
                 'contact' => ['id' => 'contact_test_id'],
             ], 200),
+            'https://services.leadconnectorhq.com/contacts/*/tags' => Http::response([
+                'tags' => ['WESS'],
+            ], 200),
 
             // Specific appointment booking endpoint (MUST be listed before calendars/* wildcard)
             'https://services.leadconnectorhq.com/calendars/events/appointments*' => function ($request) {
