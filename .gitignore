@@ -32,3 +32,4 @@ public/test_*.php
 *.sql
 *.xlsx
 *.zip
+scratch/

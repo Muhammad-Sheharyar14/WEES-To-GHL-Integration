@@ -32,7 +32,7 @@ class GhlCalendarService
     /**
      * Helper for authorized GHL requests
      */
-    protected function ghlRequest(string $method, string $endpoint, string $locationId, array $data = [], ?string $companyId = null)
+    public function ghlRequest(string $method, string $endpoint, string $locationId, array $data = [], ?string $companyId = null)
     {
         $token = $this->authService->getValidAccessToken($locationId, $companyId);
 
@@ -632,9 +632,13 @@ class GhlCalendarService
             }
 
             try {
-                $this->cancelAppointmentInGhl($locationId, $existingGhlId);
+                // Hard delete old calendar appointment so it does not remain as a cancelled strikethrough card in "View: All"
+                $delRes = $this->ghlRequest('DELETE', "calendars/events/appointments/{$existingGhlId}", $locationId);
+                if (! $delRes->successful() && $delRes->status() !== 404) {
+                    $this->cancelAppointmentInGhl($locationId, $existingGhlId);
+                }
             } catch (\Throwable $cancelEx) {
-                Log::warning("Could not cancel old calendar appointment {$existingGhlId}: ".$cancelEx->getMessage());
+                Log::warning("Could not delete old calendar appointment {$existingGhlId}: ".$cancelEx->getMessage());
             }
             $isUpdate = false;
             $existingGhlId = null;
@@ -819,12 +823,15 @@ class GhlCalendarService
 
                 $syncHash = md5(($wessAppointment['date'] ?? '').($wessAppointment['status'] ?? '').($wessAppointment['processing_time'] ?? '').($wessAppointment['service_name'] ?? $wessAppointment['service'] ?? '').($wessAppointment['customer_name'] ?? '').$empKey);
 
+                $wessCustId = !empty($wessAppointment['customer']['id']) ? (string)$wessAppointment['customer']['id'] : (!empty($wessAppointment['customer_id']) ? (string)$wessAppointment['customer_id'] : null);
+
                 SyncedAppointment::updateOrCreate(
                     [
                         'location_id' => $locationId,
                         'wess_appointment_id' => $wessApptId,
                     ],
                     [
+                        'wess_customer_id' => $wessCustId,
                         'ghl_appointment_id' => (string) $savedGhlId,
                         'ghl_contact_id' => $contactId ? (string) $contactId : null,
                         'calendar_id' => (string) $calendarId,
@@ -955,6 +962,24 @@ class GhlCalendarService
             return in_array($res->status(), [200, 201]);
         } catch (Exception $e) {
             Log::warning("Failed to add tags to GHL contact {$contactId}: ".$e->getMessage());
+
+            return false;
+        }
+    }
+
+    /**
+     * Add an internal note to a GHL Contact
+     */
+    public function addContactNote(string $locationId, string $contactId, string $body): bool
+    {
+        try {
+            $res = $this->ghlRequest('POST', "contacts/{$contactId}/notes", $locationId, [
+                'body' => $body,
+            ]);
+
+            return in_array($res->status(), [200, 201]);
+        } catch (\Throwable $e) {
+            Log::warning("Failed to add note to GHL contact {$contactId}: ".$e->getMessage());
 
             return false;
         }

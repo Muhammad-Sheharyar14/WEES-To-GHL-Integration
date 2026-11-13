@@ -690,7 +690,7 @@ class GhlWebhookTest extends TestCase
         $this->assertNotNull($capturedPayload, 'Expected createCustomer to be called');
         $this->assertEquals('Alice', $capturedPayload['first_name']);
         $this->assertEquals('Wong', $capturedPayload['last_name']);
-        $this->assertEquals('65', $capturedPayload['phone_mobile_country_code']);
+        $this->assertEquals('+65', $capturedPayload['phone_mobile_country_code']);
         $this->assertEquals('98765432', $capturedPayload['phone_mobile']);
         // Crucial: Gender must be normalized to 'F' under detail.gender per WESS API v1.0.0
         $this->assertEquals('F', $capturedPayload['detail']['gender'] ?? null);
@@ -762,7 +762,7 @@ class GhlWebhookTest extends TestCase
         // Root fields
         $this->assertEquals('Alice', $capturedPayload['first_name']);
         $this->assertEquals('Wong', $capturedPayload['last_name']);
-        $this->assertEquals('65', $capturedPayload['phone_mobile_country_code']);
+        $this->assertEquals('+65', $capturedPayload['phone_mobile_country_code']);
         $this->assertEquals('98765432', $capturedPayload['phone_mobile']);
         $this->assertEquals('alice.wong@example.com', $capturedPayload['email']);
         $this->assertEquals('MS', $capturedPayload['salutation']);

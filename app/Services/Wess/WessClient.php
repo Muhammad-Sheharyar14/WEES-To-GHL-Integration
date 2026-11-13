@@ -317,40 +317,40 @@ class WessClient
         $hasPlus = str_starts_with($raw, '+');
         $digits = preg_replace('/[^0-9]/', '', $raw);
 
-        $countryCode = '65'; // Default to Singapore (+65)
+        $countryCode = '+65'; // Default to Singapore (+65)
         $mobile = $digits;
 
         if ($hasPlus) {
             // E.g., +6591234567, +60123456789, +15551234567, etc.
             if (str_starts_with($digits, '65') && strlen($digits) >= 10) {
-                $countryCode = '65';
+                $countryCode = '+65';
                 $mobile = substr($digits, 2);
             } elseif (str_starts_with($digits, '60') && strlen($digits) >= 11) {
-                $countryCode = '60';
+                $countryCode = '+60';
                 $mobile = substr($digits, 2);
             } elseif (str_starts_with($digits, '1') && strlen($digits) == 11) {
-                $countryCode = '1';
+                $countryCode = '+1';
                 $mobile = substr($digits, 1);
             } elseif (str_starts_with($digits, '44') && strlen($digits) >= 11) {
-                $countryCode = '44';
+                $countryCode = '+44';
                 $mobile = substr($digits, 2);
             } elseif (str_starts_with($digits, '61') && strlen($digits) >= 11) {
-                $countryCode = '61';
+                $countryCode = '+61';
                 $mobile = substr($digits, 2);
             } elseif (str_starts_with($digits, '91') && strlen($digits) >= 12) {
-                $countryCode = '91';
+                $countryCode = '+91';
                 $mobile = substr($digits, 2);
             }
         } else {
             // No leading plus: e.g. 6591234567 or 91234567
             if (str_starts_with($digits, '65') && strlen($digits) == 10) {
-                $countryCode = '65';
+                $countryCode = '+65';
                 $mobile = substr($digits, 2);
             } elseif (str_starts_with($digits, '60') && (strlen($digits) == 11 || strlen($digits) == 12)) {
-                $countryCode = '60';
+                $countryCode = '+60';
                 $mobile = substr($digits, 2);
             } elseif (strlen($digits) == 8) {
-                $countryCode = '65';
+                $countryCode = '+65';
                 $mobile = $digits;
             }
         }
@@ -372,6 +372,14 @@ class WessClient
             $parsed = self::parsePhoneNumber($rawPhone);
             $data['phone_mobile_country_code'] = $data['phone_mobile_country_code'] ?? $parsed['country_code'];
             $data['phone_mobile']              = $parsed['mobile'];
+        }
+
+        // Ensure phone_mobile_country_code has leading '+' per WESS validation
+        if (!empty($data['phone_mobile_country_code'])) {
+            $cc = trim((string)$data['phone_mobile_country_code']);
+            if (!str_starts_with($cc, '+')) {
+                $data['phone_mobile_country_code'] = "+{$cc}";
+            }
         }
 
         // Clean up internal non-WESS aliases
@@ -523,6 +531,22 @@ class WessClient
         }
 
         return $response->json() ?? [];
+    }
+
+    /**
+     * Get sales transactions for a customer in a branch
+     * Supports filtering by status e.g. filter[status]=LM,BC,NS,VD
+     */
+    public function getCustomerTransactions(int|string $branchId, int|string $customerId, array $params = []): array
+    {
+        $response = $this->request('GET', "{$this->baseUrl}/branches/{$branchId}/customers/{$customerId}/sales/transaction", $params);
+
+        if (!$response->successful()) {
+            return [];
+        }
+
+        $json = $response->json();
+        return $json['data'] ?? (is_array($json) ? $json : []);
     }
 
     /**

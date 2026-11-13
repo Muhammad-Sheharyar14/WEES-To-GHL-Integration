@@ -14,6 +14,7 @@ class SyncedAppointment extends Model
     protected $fillable = [
         'location_id',
         'wess_appointment_id',
+        'wess_customer_id',
         'ghl_appointment_id',
         'ghl_contact_id',
         'calendar_id',

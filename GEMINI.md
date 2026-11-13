@@ -22,3 +22,4 @@
   1. Unit tests with mocked HTTP responses (`Http::fake()`), OR
   2. The dedicated Prelive/Sandbox environment (`https://api.prelive.wessconnect.net`).
 - If any script, command, or request attempts to create or mutate anything in Live WESS, **STOP immediately and abort the action**.
+

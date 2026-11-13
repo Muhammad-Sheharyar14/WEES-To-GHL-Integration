@@ -23,7 +23,7 @@ class WessSyncService
      * Run synchronization for all active locations or a specific location
      * Respects Master Sync Switch (Excel Item A.3)
      */
-    public function syncAllLocations(?string $specificLocationId = null, ?int $limit = null, bool $isTest = false): array
+    public function syncAllLocations(?string $specificLocationId = null, ?int $limit = null, bool $isTest = false, ?callable $progressCallback = null): array
     {
         $query = WessConfig::query();
 
@@ -41,6 +41,9 @@ class WessSyncService
                     'status' => 'skipped',
                     'message' => 'Sync is paused for this location via Master Switch.',
                 ];
+                if ($progressCallback) {
+                    $progressCallback("Location [{$config->location_id}]: Sync is paused via Master Switch.\n");
+                }
 
                 continue;
             }
@@ -50,11 +53,14 @@ class WessSyncService
                     'status' => 'skipped',
                     'message' => 'WESS API token not configured.',
                 ];
+                if ($progressCallback) {
+                    $progressCallback("Location [{$config->location_id}]: WESS API token not configured.\n");
+                }
 
                 continue;
             }
 
-            $results[$config->location_id] = $this->syncLocation($config, $limit, $isTest);
+            $results[$config->location_id] = $this->syncLocation($config, $limit, $isTest, $progressCallback);
         }
 
         return $results;
@@ -63,7 +69,7 @@ class WessSyncService
     /**
      * Synchronize a single location between WESS and GoHighLevel
      */
-    public function syncLocation(WessConfig|string $config, ?int $limit = null, bool $isTest = false): array
+    public function syncLocation(WessConfig|string $config, ?int $limit = null, bool $isTest = false, ?callable $progressCallback = null): array
     {
         if (is_string($config)) {
             $config = WessConfig::where('location_id', $config)->firstOrFail();
@@ -101,6 +107,10 @@ class WessSyncService
                 $startDate = now()->startOfDay();
             }
 
+            if ($progressCallback) {
+                $progressCallback("Location [{$locationId}]: Querying WESS appointments ({$startDate->format('Y-m-d')} to {$targetEndDate->format('Y-m-d')})...\n");
+            }
+
             // Fetch appointments from WESS
             // WESS API imposes a 30-day window limit per request (Section 3.12).
             // If the total window exceeds 30 days (e.g. paused for multiple weeks), chunk into consecutive 30-day slices.
@@ -118,7 +128,7 @@ class WessSyncService
                     'filter' => [
                         'date_from' => $currentStart->format('Y-m-d H:i:s'),
                         'date_to' => $currentEnd->format('Y-m-d H:i:s'),
-                        'status' => 'OP,RQ,CF,CI,CO,LM,BC,NS,VD',
+                        'status' => 'OP,RQ,CF,BC',
                     ],
                     'per_page' => $limit ? min($limit, 100) : 100,
                     'sort' => 'date',
@@ -155,6 +165,10 @@ class WessSyncService
             // Cap appointments if limit is set (e.g. ?test=1 or ?test=5)
             if ($limit !== null && $limit > 0 && ! empty($appointments)) {
                 $appointments = array_slice($appointments, 0, $limit);
+            }
+
+            if ($progressCallback) {
+                $progressCallback("Location [{$locationId}]: Found ".count($appointments)." active appointment(s). Synchronizing to CRM...\n");
             }
 
             $params = [
@@ -333,19 +347,19 @@ class WessSyncService
                     }
 
                     $empKey = '';
-                    if (!empty($appt['employees']) && is_array($appt['employees'])) {
+                    if (! empty($appt['employees']) && is_array($appt['employees'])) {
                         foreach ($appt['employees'] as $emp) {
-                            $empKey .= ($emp['id'] ?? '') . ($emp['first_name'] ?? '') . ($emp['code'] ?? '');
+                            $empKey .= ($emp['id'] ?? '').($emp['first_name'] ?? '').($emp['code'] ?? '');
                         }
                     } else {
                         $empKey = (string) ($appt['employee_id'] ?? ($appt['staff_id'] ?? ''));
                     }
 
                     $custKey = '';
-                    if (!empty($appt['customer']) && is_array($appt['customer'])) {
-                        $custKey = ($appt['customer']['code'] ?? '') .
-                                   ($appt['customer']['phone_mobile'] ?? ($appt['customer']['phone'] ?? '')) .
-                                   ($appt['customer']['email'] ?? '') .
+                    if (! empty($appt['customer']) && is_array($appt['customer'])) {
+                        $custKey = ($appt['customer']['code'] ?? '').
+                                   ($appt['customer']['phone_mobile'] ?? ($appt['customer']['phone'] ?? '')).
+                                   ($appt['customer']['email'] ?? '').
                                    ($appt['customer']['salutation'] ?? '');
                     }
 
@@ -379,6 +393,10 @@ class WessSyncService
                     );
                     $syncedCount++;
 
+                    if ($progressCallback && ($syncedCount % 5 === 0 || $syncedCount === count($appointments))) {
+                        $progressCallback("Location [{$locationId}]: Synced {$syncedCount}/".count($appointments)." appointments...\n");
+                    }
+
                     // Pace calls to GHL to respect GHL 10 req/s burst limit
                     usleep(120000); // 120ms
                 } catch (Exception $e) {
@@ -386,42 +404,165 @@ class WessSyncService
                 }
             }
 
-            /*
-            // [COMMENTED OUT PER USER REQUEST - October 27, 2026]
-            // 3. Sync Cancellations: Remove or cancel appointments in CRM that were cancelled or deleted in WESS
-            if (!$stoppedEarly && !$isTest) {
-                $activeWessIds = array_map('strval', array_column(
-                    array_filter($appointments, function($a) {
-                        $st = strtolower(trim((string)($a['status'] ?? '')));
-                        return !in_array($st, ['cancelled', 'cancel', 'last minute cancel', 'bc'], true);
-                    }),
-                    'id'
-                ));
+            // 3. Hybrid Cancellation Sync: Detect and verify appointments cancelled/voided in WESS
+            // Runs only if sync completed normally (avoids false cancellations on stopped responses)
+            // Even if WESS schedule returns 0 appointments (e.g. all appointments cancelled),
+            // the Hybrid Guarantee requires positive proof from customer transactions before cancelling in CRM.
+            if (! $stoppedEarly && ! $isTest) {
+                $activeWessIds = ! empty($appointments)
+                    ? array_map('strval', array_column(
+                        array_filter($appointments, function ($a) {
+                            $st = strtolower(trim((string) ($a['status'] ?? '')));
 
+                            return ! in_array($st, ['cancelled', 'cancel', 'last minute cancel', 'bc', 'void', 'vd'], true);
+                        }),
+                        'id'
+                    ))
+                    : [];
+
+                // Find local active synced appointments that fall strictly within the queried date window
                 $disappearedAppts = SyncedAppointment::where('location_id', $locationId)
                     ->where('status', '!=', 'cancelled')
-                    ->get()
-                    ->filter(function ($rec) use ($startDate, $targetEndDate) {
-                        if (empty($rec->start_time)) return false;
-                        try {
-                            $parsed = Carbon::parse($rec->start_time);
-                            return $parsed->gte($startDate) && $parsed->lte($targetEndDate);
-                        } catch (\Throwable $e) {
-                            return false;
-                        }
-                    });
+                    ->whereNotNull('start_time')
+                    ->whereBetween('start_time', [
+                        $startDate->format('Y-m-d H:i:s'),
+                        $targetEndDate->format('Y-m-d H:i:s'),
+                    ])
+                    ->get();
+
+                if ($progressCallback) {
+                    $progressCallback("Location [{$locationId}]: Running hybrid cancellation verification on ".$disappearedAppts->count()." active appointment(s)...\n");
+                }
+
+                // In-memory cache to prevent redundant API calls during batch disappearance checks
+                $customerTxCache = [];
 
                 foreach ($disappearedAppts as $disAppt) {
-                    if (!in_array((string)$disAppt->wess_appointment_id, $activeWessIds, true)) {
-                        if (!empty($disAppt->ghl_appointment_id)) {
-                            $this->ghlCalendarService->cancelAppointmentInGhl($locationId, $disAppt->ghl_appointment_id);
+                    $disWessId = (string) $disAppt->wess_appointment_id;
+                    if (! in_array($disWessId, $activeWessIds, true)) {
+                        // Reschedule Safeguard:
+                        // If another active booking exists under the same GHL appointment, do NOT cancel in GHL!
+                        $hasActiveReschedule = SyncedAppointment::where('location_id', $locationId)
+                            ->where('ghl_appointment_id', $disAppt->ghl_appointment_id)
+                            ->where('wess_appointment_id', '!=', $disWessId)
+                            ->where('status', '!=', 'cancelled')
+                            ->exists();
+
+                        if ($hasActiveReschedule) {
+                            Log::info("WESS cancellation sync: WESS #{$disWessId} is missing, but GHL appointment {$disAppt->ghl_appointment_id} is active under a rescheduled booking. Preserved GHL appointment.");
+                            $disAppt->update(['status' => 'cancelled']);
+
+                            continue;
                         }
+
+                        // Targeted Verification via Customer Transactions (The Hybrid Solution):
+                        // If customer ID is available, verify if WESS sales transaction confirms LM (Last Minute Cancel), VD (Void), or BC
+                        $verifiedStatus = 'Cancelled / Voided';
+                        $txProof = null;
+                        $custId = $disAppt->wess_customer_id;
+
+                        if (empty($custId)) {
+                            // If this record has no wess_customer_id, skip transaction check
+                            // (Avoids slow blocking HTTP calls across GHL and WESS phone lookups)
+                            continue;
+                        }
+
+                        if (! empty($custId)) {
+                            try {
+                                $apptDate = ! empty($disAppt->start_time) ? Carbon::parse($disAppt->start_time) : null;
+                                $dateKey = $apptDate ? $apptDate->format('Y-m-d') : 'all';
+                                $cacheKey = "{$branchId}_{$custId}_{$dateKey}";
+
+                                if (! array_key_exists($cacheKey, $customerTxCache)) {
+                                    $txParams = ['filter' => ['status' => 'LM,BC,NS,VD']];
+                                    if ($apptDate) {
+                                        // +/- 1 day buffer around appointment start time to account for timezone shifts
+                                        $txParams['filter']['date_from'] = $apptDate->copy()->subDay()->startOfDay()->format('Y-m-d H:i:s');
+                                        $txParams['filter']['date_to'] = $apptDate->copy()->addDay()->endOfDay()->format('Y-m-d H:i:s');
+                                    }
+                                    $customerTxCache[$cacheKey] = $wessClient->getCustomerTransactions($branchId, $custId, $txParams);
+                                }
+
+                                $custTxs = $customerTxCache[$cacheKey] ?? [];
+                                if (! empty($custTxs)) {
+                                    $matchingTx = null;
+                                    foreach ($custTxs as $tx) {
+                                        $txId = (string) ($tx['id'] ?? '');
+                                        $txDate = ! empty($tx['date']) ? Carbon::parse($tx['date'])->format('Y-m-d') : null;
+                                        $targetDate = $apptDate ? $apptDate->format('Y-m-d') : null;
+
+                                        // Match by transaction ID or appointment date
+                                        if ($txId === $disWessId || ($targetDate && $txDate === $targetDate)) {
+                                            $matchingTx = $tx;
+                                            break;
+                                        }
+                                    }
+
+                                    // Fallback to first filtered transaction if specific match didn't trigger
+                                    if (! $matchingTx && count($custTxs) === 1) {
+                                        $matchingTx = $custTxs[0];
+                                    }
+
+                                    if ($matchingTx) {
+                                        $verifiedStatus = $matchingTx['status'] ?? 'LM';
+                                        $txProof = $matchingTx;
+                                        Log::info("Hybrid Verification: Confirmed WESS cancellation for #{$disWessId} via Customer #{$custId} transaction with status '{$verifiedStatus}'.");
+                                    }
+                                }
+                            } catch (\Throwable $txEx) {
+                                Log::debug("Targeted customer transaction verification skipped for #{$disWessId}: ".$txEx->getMessage());
+                            }
+                        }
+
+                        // Hybrid Guarantee: Only cancel if cancellation is positively verified via customer transactions (LM/VD/BC)
+                        // This prevents guessing or cancelling appointments when not explicitly verified
+                        if (! $txProof) {
+                            Log::info("Hybrid Verification: Appointment #{$disWessId} is missing from active schedule, but no LM/VD cancellation transaction was found. Preserving CRM appointment {$disAppt->ghl_appointment_id}.");
+
+                            continue;
+                        }
+
+                        // Propagate cancellation to CRM calendar
+                        if (! empty($disAppt->ghl_appointment_id)) {
+                            $cancelSuccess = $this->ghlCalendarService->cancelAppointmentInGhl($locationId, $disAppt->ghl_appointment_id);
+                            $cancelledCount++;
+
+                            WebhookLog::create([
+                                'source' => 'wess_sync',
+                                'location_id' => $locationId,
+                                'event_type' => 'WessAppointmentCancelled',
+                                'endpoint' => "{$this->ghlCalendarService->getBaseUrl()}/calendars/events/appointments/{$disAppt->ghl_appointment_id}",
+                                'method' => 'PUT',
+                                'payload' => [
+                                    'ghl_appointment_id' => $disAppt->ghl_appointment_id,
+                                    'wess_appointment_id' => $disWessId,
+                                    'appointmentStatus' => 'cancelled',
+                                    'status' => $verifiedStatus,
+                                    'verified_via' => $txProof ? 'customer_sales_transaction' : 'disappearance_detection',
+                                    'wess_transaction' => $txProof,
+                                ],
+                                'response_status' => $cancelSuccess ? 200 : 400,
+                                'response_body' => json_encode([
+                                    'status' => $cancelSuccess ? 'success' : 'failed',
+                                    'appointmentStatus' => 'cancelled',
+                                    'message' => "WESS appointment #{$disWessId} is cancelled/voided in WESS (verified: {$verifiedStatus}). Cancelled CRM appointment {$disAppt->ghl_appointment_id}.",
+                                    'wess_appointment_id' => $disWessId,
+                                    'ghl_appointment_id' => $disAppt->ghl_appointment_id,
+                                    'wess_transaction' => $txProof,
+                                ]),
+                            ]);
+                        }
+
+                        // Mark status as cancelled in database so this appointment is never queried/processed again
                         $disAppt->update(['status' => 'cancelled']);
-                        Log::info("WESS cancellation propagated to CRM: WESS #{$disAppt->wess_appointment_id} is no longer active in WESS. Cancelled corresponding CRM appointment {$disAppt->ghl_appointment_id}.");
+                        Log::info("WESS cancellation propagated to CRM: WESS #{$disWessId} (status: {$verifiedStatus}) cancelled corresponding CRM appointment {$disAppt->ghl_appointment_id}.");
+
+                        if ($progressCallback) {
+                            $progressCallback("Location [{$locationId}]: Cancelled CRM appointment {$disAppt->ghl_appointment_id} (WESS #{$disWessId}, verified: {$verifiedStatus}).\n");
+                        }
                     }
                 }
             }
-            */
 
             // Update last_synced_at timestamp on location config
             // If this was a catch-up recovery sync and completed without being stopped early, clear sync_paused_at
